@@ -1,0 +1,68 @@
+{
+  "project": "my-project",
+  "mode": "feature",
+  "branchName": "ralph/feature-name",
+  "description": "Brief description of what this PRD builds",
+  "sourceIssues": [42, 43],
+  "deepThinkCheckpoint": "ralph-feature-name-latest",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add new database table",
+      "description": "As a developer, I need a new table for storing X.",
+      "githubIssue": 42,
+      "acceptanceCriteria": [
+        "Migration creates the table with correct columns",
+        "Model/entity is defined with proper types",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "stuck": false,
+      "stuckReason": "",
+      "strategy": "migration-safety",
+      "labels": ["backend", "database"],
+      "notes": "",
+      "iterations": 0
+    },
+    {
+      "id": "US-002",
+      "title": "Add API endpoint for X",
+      "description": "As a user, I want to interact with X via the API.",
+      "githubIssue": 42,
+      "acceptanceCriteria": [
+        "GET /api/v1/x returns list",
+        "POST /api/v1/x creates new record",
+        "Unit tests cover happy and error paths"
+      ],
+      "priority": 2,
+      "passes": false,
+      "stuck": false,
+      "stuckReason": "",
+      "strategy": "tdd-workflow",
+      "labels": ["backend", "api"],
+      "notes": "",
+      "iterations": 0
+    },
+    {
+      "id": "US-003",
+      "title": "Display X in the frontend",
+      "description": "As a user, I want to see X in the dashboard.",
+      "githubIssue": 43,
+      "acceptanceCriteria": [
+        "Component renders list of X",
+        "Loading and error states handled",
+        "TypeScript types match API response",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "stuck": false,
+      "stuckReason": "",
+      "strategy": "tdd-workflow",
+      "labels": ["frontend", "ui"],
+      "notes": "",
+      "iterations": 0
+    }
+  ]
+}

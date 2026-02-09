@@ -1,0 +1,132 @@
+{
+  "strategies": {
+    "tdd-workflow": {
+      "description": "Standard TDD cycle: red-green-refactor",
+      "steps": [
+        "Write a failing test that captures the requirement",
+        "Implement the minimal code to make it pass",
+        "Refactor while keeping tests green",
+        "Consider edge cases and add tests for them",
+        "Verify no regressions in related tests"
+      ]
+    },
+    "cross-module": {
+      "description": "Changes spanning multiple modules or packages",
+      "steps": [
+        "Map all modules/packages affected by this change",
+        "Identify interfaces and contracts between modules",
+        "Plan changes in dependency order (leaf modules first)",
+        "Consider backward compatibility if modules are versioned",
+        "Test each module independently, then integration"
+      ]
+    },
+    "migration-safety": {
+      "description": "Database schema or data migrations",
+      "steps": [
+        "Document current schema state",
+        "Design migration that is reversible",
+        "Consider data loss risks",
+        "Plan for zero-downtime deployment if applicable",
+        "Test with realistic data volume",
+        "Verify ORM/model changes match migration"
+      ]
+    },
+    "billing-security": {
+      "description": "Payment, subscription, or tier-gating logic",
+      "steps": [
+        "Map the money flow: who pays what, when",
+        "Identify bypass vectors (free tier getting paid features)",
+        "Verify webhook signature validation",
+        "Test upgrade, downgrade, and cancellation flows",
+        "Check idempotency for payment operations",
+        "Verify audit trail and logging"
+      ]
+    },
+    "ai-prompt-design": {
+      "description": "AI prompt engineering and LLM integration",
+      "steps": [
+        "Define the desired output format and constraints",
+        "Consider edge cases in user input",
+        "Design for graceful degradation on API failure",
+        "Plan token budget and cost implications",
+        "Test with adversarial inputs",
+        "Consider caching and rate limiting"
+      ]
+    },
+    "user-flow": {
+      "description": "Multi-step user interaction design",
+      "steps": [
+        "Map the complete user journey (happy path)",
+        "Identify error states at each step",
+        "Design loading and transition states",
+        "Consider back navigation and state persistence",
+        "Plan for mobile and desktop viewports",
+        "Verify accessibility at each step"
+      ]
+    },
+    "smart-contract-safety": {
+      "description": "Blockchain smart contract changes",
+      "steps": [
+        "Identify all state-changing functions affected",
+        "Check for reentrancy vulnerabilities",
+        "Verify access control modifiers",
+        "Consider gas optimization",
+        "Test with edge cases (zero values, max values)",
+        "Verify upgrade compatibility if using proxies"
+      ]
+    },
+    "infrastructure": {
+      "description": "Deployment, CI/CD, and infrastructure changes",
+      "steps": [
+        "Identify blast radius of the change",
+        "Plan rollback strategy",
+        "Consider secrets and environment variables",
+        "Test in staging-equivalent before production",
+        "Verify monitoring and alerting covers the change",
+        "Document any manual steps required"
+      ]
+    },
+    "root-cause": {
+      "description": "Systematic debugging and investigation",
+      "steps": [
+        "Reproduce the issue reliably",
+        "Gather evidence: logs, stack traces, timing",
+        "Form hypotheses and rank by likelihood",
+        "Test each hypothesis systematically",
+        "Identify the root cause, not just the symptom",
+        "Verify the fix doesn't introduce new issues"
+      ]
+    },
+    "decision-matrix": {
+      "description": "Weighted comparison of multiple approaches",
+      "steps": [
+        "List all viable approaches",
+        "Define evaluation criteria and weights",
+        "Score each approach against criteria",
+        "Consider reversibility of each option",
+        "Document trade-offs and risks",
+        "Make recommendation with confidence level"
+      ]
+    }
+  },
+  "practices": [
+    "Tests must be written before implementation (TDD)",
+    "Each commit should be atomic and pass all tests",
+    "Follow existing patterns in the codebase",
+    "Security-sensitive changes require extra review",
+    "Generated files must be regenerated, not manually edited"
+  ],
+  "antiPatterns": [
+    "Writing production code without tests",
+    "Combining unrelated changes in one commit",
+    "Hardcoding secrets or environment-specific values",
+    "Skipping error handling for external calls",
+    "Manual type duplication instead of code generation"
+  ],
+  "persistence": {
+    "enabled": true,
+    "directory": ".deep-think/sessions",
+    "maxCheckpoints": 10,
+    "autoSave": true
+  }
+}

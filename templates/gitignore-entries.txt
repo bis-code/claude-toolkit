@@ -1,0 +1,10 @@
+# Claude Toolkit (runtime files)
+prd.json
+prd.json.bak
+progress.txt
+.qa-active
+tools/qa/qa-state.json
+tools/qa/qa-progress.txt
+
+# Deep-Think (session state)
+.deep-think/
