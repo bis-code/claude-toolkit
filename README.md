@@ -41,7 +41,7 @@ Builds features from GitHub issues using the Ralph pattern: fresh Claude Code in
 
 ### /qa — Autonomous QA Agent
 
-Scans, fixes, and reports quality issues in a git worktree (doesn't affect your branch).
+Scans, fixes, and reports quality issues. Uses a git worktree for isolation (git repos) or runs in-place (workspaces).
 
 ```bash
 # In Claude Code:
@@ -51,10 +51,10 @@ Scans, fixes, and reports quality issues in a git worktree (doesn't affect your 
 ```
 
 **How it works:**
-1. Creates a git worktree from your default branch
+1. Creates a git worktree from your default branch (or runs in-place for non-git dirs)
 2. Spawns fresh Claude instances per scan category
 3. Fixes small issues (< 30 lines), reports larger ones as GitHub issues
-4. Creates a PR with all fixes when done
+4. Creates a PR with all fixes when done (git repos only)
 
 ## What Gets Installed
 
@@ -95,6 +95,7 @@ The installer generates `.claude-toolkit.json` with your project's settings:
   "version": "1.0.0",
   "project": {
     "name": "my-project",
+    "type": "repository",
     "techStack": ["go", "react"]
   },
   "commands": {
@@ -111,6 +112,35 @@ The installer generates `.claude-toolkit.json` with your project's settings:
 
 Edit this file to customize QA behavior for your project.
 
+### Project Types
+
+| Type | When | QA Behavior |
+|------|------|-------------|
+| `repository` | Git repo detected | Uses worktree for isolated QA (default) |
+| `workspace` | No git repo | Runs QA in-place, skips .gitignore |
+
+## Non-Git Workspaces
+
+The toolkit works in directories that aren't git repos (e.g., `~/work/coding/` with multiple sub-projects).
+
+```bash
+cd ~/work/coding
+~/.claude/toolkit/install.sh
+```
+
+**What's different in workspace mode:**
+- `.claude-toolkit.json` has `"type": "workspace"`
+- `qa.sh` runs in-place (no worktree isolation)
+- `.gitignore` modifications are skipped
+- Tech stack detection scans the directory as-is
+
+**`qa.sh` flags for workspaces:**
+```bash
+./tools/qa/qa.sh                  # Runs in-place automatically
+./tools/qa/qa.sh --scan-only      # Report only, no fixes
+./tools/qa/qa.sh --no-worktree    # Force in-place mode (even in git repos)
+```
+
 ## Auto-Detection
 
 The toolkit auto-detects your tech stack and suggests appropriate settings:
@@ -126,6 +156,35 @@ The toolkit auto-detects your tech stack and suggests appropriate settings:
 | React/Vue | (from package.json) | (from package.json) | + accessibility, component-quality |
 
 Makefile targets are preferred over raw commands when available.
+
+## Multiple Claude Accounts
+
+If you use different Claude accounts for different directories (e.g., personal vs work), use the `CLAUDE_CONFIG_DIR` environment variable with a shell function:
+
+```bash
+# Add to ~/.zshrc (same pattern as gh CLI account switching)
+claude() {
+  if [[ "$PWD" == "$HOME/work"* ]]; then
+    CLAUDE_CONFIG_DIR="$HOME/.claude-work" command claude "$@"
+  else
+    command claude "$@"
+  fi
+}
+```
+
+Then authenticate each account:
+```bash
+# Personal (default ~/.claude)
+claude login
+
+# Work
+CLAUDE_CONFIG_DIR=~/.claude-work claude login
+```
+
+Global commands (`/ralph`, `/qa`) need to be installed in both config dirs:
+```bash
+cp -r ~/.claude/commands ~/.claude-work/commands
+```
 
 ## Prerequisites
 

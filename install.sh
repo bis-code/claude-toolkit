@@ -245,11 +245,24 @@ if [ "$PREREQS_OK" = false ]; then
 fi
 
 # ── Step 3: Detect project ──
-PROJECT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+IS_GIT_REPO=false
+if git rev-parse --show-toplevel &>/dev/null; then
+  IS_GIT_REPO=true
+  PROJECT_DIR="$(git rev-parse --show-toplevel)"
+else
+  PROJECT_DIR="$(pwd)"
+fi
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
+PROJECT_TYPE="repository"
+[ "$IS_GIT_REPO" = false ] && PROJECT_TYPE="workspace"
 
 header "2" "Project detection: $PROJECT_DIR"
-info "Git repo: $PROJECT_NAME"
+if [ "$IS_GIT_REPO" = true ]; then
+  info "Git repository: $PROJECT_NAME"
+else
+  info "Workspace (no git): $PROJECT_NAME"
+  warn "QA will run in-place (no worktree isolation without git)"
+fi
 
 TECH_STACK=$(detect_tech_stack "$PROJECT_DIR")
 if [ -n "$TECH_STACK" ]; then
@@ -348,14 +361,19 @@ if [ -n "$LINT_CMD" ]; then
   esac
 fi
 
-# Default branch detection
-DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
-read -r -p "    QA worktree branch: $DEFAULT_BRANCH  [Y/n/edit]: " ans
-case "$ans" in
-  n|N) DEFAULT_BRANCH="main" ;;
-  "") ;;
-  *) DEFAULT_BRANCH="$ans" ;;
-esac
+# Default branch detection (git only)
+DEFAULT_BRANCH=""
+if [ "$IS_GIT_REPO" = true ]; then
+  DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+  read -r -p "    QA worktree branch: $DEFAULT_BRANCH  [Y/n/edit]: " ans
+  case "$ans" in
+    n|N) DEFAULT_BRANCH="main" ;;
+    "") ;;
+    *) DEFAULT_BRANCH="$ans" ;;
+  esac
+else
+  info "QA worktree: disabled (no git repo — QA will run in-place)"
+fi
 
 # ── Step 6: Install files ──
 header "5" "Installing"
@@ -437,6 +455,7 @@ if [ ! -f "$TOOLKIT_CONFIG" ] || [ "$FORCE" = true ] || [ "$MODE" = "update" ]; 
   "version": "$TOOLKIT_VERSION",
   "project": {
     "name": "$PROJECT_NAME",
+    "type": "$PROJECT_TYPE",
     "techStack": $STACK_JSON
   },
   "commands": {
@@ -446,7 +465,7 @@ if [ ! -f "$TOOLKIT_CONFIG" ] || [ "$FORCE" = true ] || [ "$MODE" = "update" ]; 
   "qa": {
     "scanCategories": $SCAN_JSON,
     "maxFixLines": 30,
-    "worktreeFromBranch": "$DEFAULT_BRANCH"
+    "worktreeFromBranch": $([ -n "$DEFAULT_BRANCH" ] && echo "\"$DEFAULT_BRANCH\"" || echo "null")
   },
   "ralph": {
     "maxLoops": 30,
@@ -465,10 +484,12 @@ else
   warn ".claude-toolkit.json already exists (use --force to overwrite)"
 fi
 
-# .gitignore — append entries
-if [ -f "$TEMPLATES/gitignore-entries.txt" ]; then
+# .gitignore — append entries (git repos only)
+if [ "$IS_GIT_REPO" = true ] && [ -f "$TEMPLATES/gitignore-entries.txt" ]; then
   append_gitignore "$PROJECT_DIR/.gitignore" "$TEMPLATES/gitignore-entries.txt"
   info ".gitignore — runtime entries added"
+elif [ "$IS_GIT_REPO" = false ]; then
+  info ".gitignore — skipped (not a git repo)"
 fi
 
 # ── Step 7: Global commands ──
