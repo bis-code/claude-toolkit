@@ -1,41 +1,99 @@
 #!/bin/bash
 # Tech stack, package manager, and command detection
 
-detect_tech_stack() {
+# Find monorepo sub-project directories (lightweight — no JSON parsing)
+# Returns newline-separated absolute paths to sub-project dirs
+_find_subproject_dirs() {
   local dir="$1"
-  local stack=()
-  [ -f "$dir/go.mod" ]         && stack+=("go")
-  [ -f "$dir/package.json" ]   && stack+=("node")
-  [ -f "$dir/Cargo.toml" ]     && stack+=("rust")
-  [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] && stack+=("python")
-  [ -f "$dir/Makefile" ]       && stack+=("make")
-  [ -d "$dir/unity" ] || [ -d "$dir/Assets" ] && stack+=("unity")
 
-  # Check for .csproj/.sln files
+  # pnpm workspace
+  if [ -f "$dir/pnpm-workspace.yaml" ]; then
+    local globs
+    globs=$(grep -E "^\s*-\s*'" "$dir/pnpm-workspace.yaml" 2>/dev/null | sed "s/.*'\(.*\)'.*/\1/")
+    for glob_pattern in $globs; do
+      local base_dir="${glob_pattern%/\*}"
+      if [ -d "$dir/$base_dir" ]; then
+        for subdir in "$dir/$base_dir"/*/; do
+          [ -d "$subdir" ] && echo "${subdir%/}"
+        done
+      fi
+    done
+    return
+  fi
+
+  # turbo.json
+  if [ -f "$dir/turbo.json" ]; then
+    for subdir in "$dir"/apps/*/ "$dir"/packages/*/; do
+      [ -d "$subdir" ] && echo "${subdir%/}"
+    done
+    return
+  fi
+
+  # lerna.json
+  if [ -f "$dir/lerna.json" ]; then
+    for subdir in "$dir"/packages/*/; do
+      [ -d "$subdir" ] && echo "${subdir%/}"
+    done
+    return
+  fi
+}
+
+_detect_tech_stack_in_dir() {
+  local dir="$1"
+  [ -f "$dir/go.mod" ]         && echo "go"
+  [ -f "$dir/package.json" ]   && echo "node"
+  [ -f "$dir/Cargo.toml" ]     && echo "rust"
+  { [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ]; } && echo "python"
+  [ -f "$dir/Makefile" ]       && echo "make"
+  { [ -d "$dir/unity" ] || [ -d "$dir/Assets" ]; } && echo "unity"
+
   local csproj_count
   csproj_count=$(find "$dir" -maxdepth 2 -name "*.csproj" 2>/dev/null | head -5 | wc -l | tr -d ' ')
-  [ "$csproj_count" -gt 0 ] && stack+=("dotnet")
+  [ "$csproj_count" -gt 0 ] && echo "dotnet"
 
-  # Check for Solidity/Hardhat/Foundry
-  [ -f "$dir/hardhat.config.ts" ] || [ -f "$dir/hardhat.config.js" ] && stack+=("solidity")
-  [ -f "$dir/foundry.toml" ] && stack+=("solidity")
+  { [ -f "$dir/hardhat.config.ts" ] || [ -f "$dir/hardhat.config.js" ]; } && echo "solidity"
+  [ -f "$dir/foundry.toml" ] && echo "solidity"
 
-  # Check for Java
-  [ -f "$dir/pom.xml" ] || [ -f "$dir/build.gradle" ] || [ -f "$dir/build.gradle.kts" ] && stack+=("java")
+  { [ -f "$dir/pom.xml" ] || [ -f "$dir/build.gradle" ] || [ -f "$dir/build.gradle.kts" ]; } && echo "java"
 
-  # Check for Docker
-  [ -f "$dir/Dockerfile" ] || [ -f "$dir/docker-compose.yml" ] || [ -f "$dir/docker-compose.yaml" ] && stack+=("docker")
+  { [ -f "$dir/Dockerfile" ] || [ -f "$dir/docker-compose.yml" ] || [ -f "$dir/docker-compose.yaml" ]; } && echo "docker"
 
-  # Check for frontend frameworks
   if [ -f "$dir/package.json" ]; then
     if grep -q '"react"' "$dir/package.json" 2>/dev/null; then
-      stack+=("react")
+      echo "react"
     elif grep -q '"vue"' "$dir/package.json" 2>/dev/null; then
-      stack+=("vue")
+      echo "vue"
     elif grep -q '"svelte"' "$dir/package.json" 2>/dev/null; then
-      stack+=("svelte")
+      echo "svelte"
     fi
   fi
+}
+
+detect_tech_stack() {
+  local dir="$1"
+  local seen=""
+  local stack=()
+
+  # Scan root
+  while IFS= read -r item; do
+    [ -z "$item" ] && continue
+    if [[ " $seen " != *" $item "* ]]; then
+      stack+=("$item")
+      seen="$seen $item"
+    fi
+  done < <(_detect_tech_stack_in_dir "$dir")
+
+  # Scan monorepo sub-projects
+  while IFS= read -r subdir; do
+    [ -z "$subdir" ] && continue
+    while IFS= read -r item; do
+      [ -z "$item" ] && continue
+      if [[ " $seen " != *" $item "* ]]; then
+        stack+=("$item")
+        seen="$seen $item"
+      fi
+    done < <(_detect_tech_stack_in_dir "$subdir")
+  done < <(_find_subproject_dirs "$dir")
 
   echo "${stack[*]}"
 }
@@ -185,83 +243,97 @@ map_stack_to_agent_domains() {
   echo "${domains[*]}"
 }
 
+# Scan a single directory for deep domain signals
+# Outputs detected domain names (one per line)
+_detect_deep_domains_in_dir() {
+  local dir="$1"
+
+  # GraphQL: .graphql files OR graphql in deps
+  if find "$dir" -maxdepth 3 -name "*.graphql" 2>/dev/null | head -1 | grep -q .; then
+    echo "graphql"
+  elif [ -f "$dir/package.json" ] && grep -q '"graphql"' "$dir/package.json" 2>/dev/null; then
+    echo "graphql"
+  elif [ -f "$dir/go.mod" ] && grep -q 'gqlgen\|graphql' "$dir/go.mod" 2>/dev/null; then
+    echo "graphql"
+  fi
+
+  # AI/LLM: openai, anthropic, langchain in deps
+  if [ -f "$dir/package.json" ] && grep -qE '"(openai|anthropic|langchain|@langchain)' "$dir/package.json" 2>/dev/null; then
+    echo "ai"
+  elif [ -f "$dir/go.mod" ] && grep -qE 'openai|anthropic|langchain' "$dir/go.mod" 2>/dev/null; then
+    echo "ai"
+  elif [ -f "$dir/requirements.txt" ] && grep -qEi 'openai|anthropic|langchain' "$dir/requirements.txt" 2>/dev/null; then
+    echo "ai"
+  elif [ -f "$dir/pyproject.toml" ] && grep -qEi 'openai|anthropic|langchain' "$dir/pyproject.toml" 2>/dev/null; then
+    echo "ai"
+  fi
+
+  # SaaS/Payments: stripe, paypal in deps
+  if [ -f "$dir/package.json" ] && grep -qE '"(stripe|paypal)' "$dir/package.json" 2>/dev/null; then
+    echo "saas"
+  elif [ -f "$dir/go.mod" ] && grep -qE 'stripe|paypal' "$dir/go.mod" 2>/dev/null; then
+    echo "saas"
+  elif [ -f "$dir/requirements.txt" ] && grep -qEi 'stripe|paypal' "$dir/requirements.txt" 2>/dev/null; then
+    echo "saas"
+  fi
+
+  # Database: GORM, prisma, migrations dir, schema files
+  if [ -f "$dir/go.mod" ] && grep -q 'gorm' "$dir/go.mod" 2>/dev/null; then
+    echo "database"
+  elif find "$dir" -maxdepth 2 -name "*.prisma" 2>/dev/null | head -1 | grep -q .; then
+    echo "database"
+  elif [ -d "$dir/migrations" ] || [ -d "$dir/db/migrations" ]; then
+    echo "database"
+  elif [ -f "$dir/package.json" ] && grep -qE '"(prisma|@prisma|typeorm|knex|drizzle)' "$dir/package.json" 2>/dev/null; then
+    echo "database"
+  fi
+
+  # Kubernetes: k8s manifests, helm charts
+  if [ -f "$dir/helmfile.yaml" ] || find "$dir" -maxdepth 3 -name "Chart.yaml" 2>/dev/null | head -1 | grep -q .; then
+    echo "kubernetes"
+  elif find "$dir" -maxdepth 3 -name "*.yaml" -exec grep -l 'kind:\s*Deployment\|kind:\s*Service\|kind:\s*StatefulSet' {} \; 2>/dev/null | head -1 | grep -q .; then
+    echo "kubernetes"
+  fi
+
+  # Observability: prometheus, grafana, datadog configs
+  if [ -f "$dir/prometheus.yml" ] || [ -f "$dir/prometheus.yaml" ]; then
+    echo "observability"
+  elif [ -d "$dir/grafana" ]; then
+    echo "observability"
+  elif [ -f "$dir/datadog.yaml" ] || [ -f "$dir/datadog.yml" ]; then
+    echo "observability"
+  elif [ -f "$dir/package.json" ] && grep -qE '"(prom-client|dd-trace|@opentelemetry)' "$dir/package.json" 2>/dev/null; then
+    echo "observability"
+  fi
+}
+
 # Deep domain detection — scans files for domain-specific signals
-# Returns space-separated list of domain directory names
+# Scans root + monorepo sub-projects. Returns space-separated list of domain directory names.
 detect_deep_domains() {
   local dir="$1"
   local seen=""
   local domains=()
 
-  _has_dd() { [[ " $seen " == *" $1 "* ]]; }
-  _add_dd() { domains+=("$1"); seen="$seen $1"; }
+  # Scan root directory
+  while IFS= read -r domain; do
+    [ -z "$domain" ] && continue
+    if [[ " $seen " != *" $domain "* ]]; then
+      domains+=("$domain")
+      seen="$seen $domain"
+    fi
+  done < <(_detect_deep_domains_in_dir "$dir")
 
-  # GraphQL: .graphql files OR graphql in deps
-  if find "$dir" -maxdepth 3 -name "*.graphql" 2>/dev/null | head -1 | grep -q .; then
-    _add_dd graphql
-  elif [ -f "$dir/package.json" ] && grep -q '"graphql"' "$dir/package.json" 2>/dev/null; then
-    _add_dd graphql
-  elif [ -f "$dir/go.mod" ] && grep -q 'gqlgen\|graphql' "$dir/go.mod" 2>/dev/null; then
-    _add_dd graphql
-  fi
-
-  # AI/LLM: openai, anthropic, langchain in deps
-  local ai_detected=false
-  if [ -f "$dir/package.json" ] && grep -qE '"(openai|anthropic|langchain|@langchain)' "$dir/package.json" 2>/dev/null; then
-    ai_detected=true
-  elif [ -f "$dir/go.mod" ] && grep -qE 'openai|anthropic|langchain' "$dir/go.mod" 2>/dev/null; then
-    ai_detected=true
-  elif [ -f "$dir/requirements.txt" ] && grep -qEi 'openai|anthropic|langchain' "$dir/requirements.txt" 2>/dev/null; then
-    ai_detected=true
-  elif [ -f "$dir/pyproject.toml" ] && grep -qEi 'openai|anthropic|langchain' "$dir/pyproject.toml" 2>/dev/null; then
-    ai_detected=true
-  fi
-  [ "$ai_detected" = true ] && _add_dd ai
-
-  # SaaS/Payments: stripe, paypal in deps
-  local saas_detected=false
-  if [ -f "$dir/package.json" ] && grep -qE '"(stripe|paypal)' "$dir/package.json" 2>/dev/null; then
-    saas_detected=true
-  elif [ -f "$dir/go.mod" ] && grep -qE 'stripe|paypal' "$dir/go.mod" 2>/dev/null; then
-    saas_detected=true
-  elif [ -f "$dir/requirements.txt" ] && grep -qEi 'stripe|paypal' "$dir/requirements.txt" 2>/dev/null; then
-    saas_detected=true
-  fi
-  [ "$saas_detected" = true ] && _add_dd saas
-
-  # Database: GORM, prisma, migrations dir, schema files
-  local db_detected=false
-  if [ -f "$dir/go.mod" ] && grep -q 'gorm' "$dir/go.mod" 2>/dev/null; then
-    db_detected=true
-  elif find "$dir" -maxdepth 2 -name "*.prisma" 2>/dev/null | head -1 | grep -q .; then
-    db_detected=true
-  elif [ -d "$dir/migrations" ] || [ -d "$dir/db/migrations" ]; then
-    db_detected=true
-  elif [ -f "$dir/package.json" ] && grep -qE '"(prisma|@prisma|typeorm|knex|drizzle)' "$dir/package.json" 2>/dev/null; then
-    db_detected=true
-  fi
-  [ "$db_detected" = true ] && _add_dd database
-
-  # Kubernetes: k8s manifests, helm charts
-  local k8s_detected=false
-  if [ -f "$dir/helmfile.yaml" ] || find "$dir" -maxdepth 3 -name "Chart.yaml" 2>/dev/null | head -1 | grep -q .; then
-    k8s_detected=true
-  elif find "$dir" -maxdepth 3 -name "*.yaml" -exec grep -l 'kind:\s*Deployment\|kind:\s*Service\|kind:\s*StatefulSet' {} \; 2>/dev/null | head -1 | grep -q .; then
-    k8s_detected=true
-  fi
-  [ "$k8s_detected" = true ] && _add_dd kubernetes
-
-  # Observability: prometheus, grafana, datadog configs
-  local obs_detected=false
-  if [ -f "$dir/prometheus.yml" ] || [ -f "$dir/prometheus.yaml" ]; then
-    obs_detected=true
-  elif [ -d "$dir/grafana" ]; then
-    obs_detected=true
-  elif [ -f "$dir/datadog.yaml" ] || [ -f "$dir/datadog.yml" ]; then
-    obs_detected=true
-  elif [ -f "$dir/package.json" ] && grep -qE '"(prom-client|dd-trace|@opentelemetry)' "$dir/package.json" 2>/dev/null; then
-    obs_detected=true
-  fi
-  [ "$obs_detected" = true ] && _add_dd observability
+  # Scan monorepo sub-projects
+  while IFS= read -r subdir; do
+    [ -z "$subdir" ] && continue
+    while IFS= read -r domain; do
+      [ -z "$domain" ] && continue
+      if [[ " $seen " != *" $domain "* ]]; then
+        domains+=("$domain")
+        seen="$seen $domain"
+      fi
+    done < <(_detect_deep_domains_in_dir "$subdir")
+  done < <(_find_subproject_dirs "$dir")
 
   echo "${domains[*]}"
 }

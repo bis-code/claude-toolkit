@@ -222,6 +222,72 @@ EOF
   [ -z "$result" ]
 }
 
+# ── monorepo-aware detection ──
+
+@test "detect_deep_domains: scans monorepo sub-projects for deps" {
+  # Simulate learnmeld: pnpm monorepo with go.mod + stripe in apps/api
+  mkdir -p "$TEST_PROJECT_DIR/apps/api" "$TEST_PROJECT_DIR/apps/web"
+  cat > "$TEST_PROJECT_DIR/pnpm-workspace.yaml" <<'EOF'
+packages:
+  - 'apps/*'
+EOF
+  cat > "$TEST_PROJECT_DIR/apps/api/go.mod" <<'EOF'
+module example.com/api
+
+go 1.21
+
+require (
+  gorm.io/gorm v1.25.0
+  github.com/stripe/stripe-go/v76 v76.0.0
+)
+EOF
+  cat > "$TEST_PROJECT_DIR/apps/web/package.json" <<'EOF'
+{"dependencies":{"react":"^18.0.0","openai":"^4.0.0"}}
+EOF
+  result=$(detect_deep_domains "$TEST_PROJECT_DIR")
+  [[ "$result" == *"database"* ]]
+  [[ "$result" == *"saas"* ]]
+  [[ "$result" == *"ai"* ]]
+}
+
+@test "detect_tech_stack: detects stack from monorepo sub-projects" {
+  mkdir -p "$TEST_PROJECT_DIR/apps/api" "$TEST_PROJECT_DIR/apps/web"
+  cat > "$TEST_PROJECT_DIR/pnpm-workspace.yaml" <<'EOF'
+packages:
+  - 'apps/*'
+EOF
+  touch "$TEST_PROJECT_DIR/apps/api/go.mod"
+  cat > "$TEST_PROJECT_DIR/apps/web/package.json" <<'EOF'
+{"dependencies":{"react":"^18.0.0"}}
+EOF
+  result=$(detect_tech_stack "$TEST_PROJECT_DIR")
+  [[ "$result" == *"go"* ]]
+  [[ "$result" == *"node"* ]]
+  [[ "$result" == *"react"* ]]
+}
+
+@test "detect_deep_domains: monorepo with graphql in sub-project" {
+  mkdir -p "$TEST_PROJECT_DIR/apps/api/graph"
+  cat > "$TEST_PROJECT_DIR/pnpm-workspace.yaml" <<'EOF'
+packages:
+  - 'apps/*'
+EOF
+  touch "$TEST_PROJECT_DIR/apps/api/graph/schema.graphql"
+  result=$(detect_deep_domains "$TEST_PROJECT_DIR")
+  [[ "$result" == *"graphql"* ]]
+}
+
+@test "detect_deep_domains: monorepo with migrations in sub-project" {
+  mkdir -p "$TEST_PROJECT_DIR/apps/api/migrations"
+  cat > "$TEST_PROJECT_DIR/pnpm-workspace.yaml" <<'EOF'
+packages:
+  - 'apps/*'
+EOF
+  touch "$TEST_PROJECT_DIR/apps/api/migrations/001_init.sql"
+  result=$(detect_deep_domains "$TEST_PROJECT_DIR")
+  [[ "$result" == *"database"* ]]
+}
+
 @test "detect_deep_domains: multiple domains detected from complex project" {
   # GraphQL + AI + Database
   mkdir -p "$TEST_PROJECT_DIR/src"
