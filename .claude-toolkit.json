@@ -1,0 +1,38 @@
+{
+  "version": "2.0.0",
+  "project": {
+    "name": "claude-toolkit",
+    "type": "repository",
+    "techStack": [],
+    "languages": [],
+    "packageManager": null
+  },
+  "commands": {
+    "test": null,
+    "lint": null
+  },
+  "qa": {
+    "scanCategories": [
+      "tests",
+      "lint",
+      "missing-tests",
+      "todo-audit"
+    ],
+    "maxFixLines": 30,
+    "worktreeFromBranch": null
+  },
+  "ralph": {
+    "maxLoops": 30,
+    "stuckThreshold": 3
+  },
+  "mcpServers": {
+    "required": [
+      "deep-think"
+    ],
+    "installed": [
+      "deep-think",
+      "leann-server",
+      "context7"
+    ]
+  }
+}
