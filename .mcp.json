@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "deep-think": {
+      "command": "mcp-deep-think",
+      "args": []
+    },
+    "leann-server": {
+      "command": "leann_mcp",
+      "args": []
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ]
+    }
+  }
+}
