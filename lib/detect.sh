@@ -137,59 +137,22 @@ detect_scan_categories() {
 # Map detected tech stack items to language rule directories
 map_stack_to_languages() {
   local stack="$1"
-  local -A seen
+  local seen=""
   local languages=()
+
+  _has_lang() { [[ " $seen " == *" $1 "* ]]; }
+  _add_lang() { languages+=("$1"); seen="$seen $1"; }
 
   for item in $stack; do
     case "$item" in
-      go)
-        if [ -z "${seen[golang]+x}" ]; then
-          languages+=("golang")
-          seen[golang]=1
-        fi
-        ;;
-      node|react|vue|svelte)
-        if [ -z "${seen[typescript]+x}" ]; then
-          languages+=("typescript")
-          seen[typescript]=1
-        fi
-        ;;
-      python)
-        if [ -z "${seen[python]+x}" ]; then
-          languages+=("python")
-          seen[python]=1
-        fi
-        ;;
-      dotnet|unity)
-        if [ -z "${seen[csharp]+x}" ]; then
-          languages+=("csharp")
-          seen[csharp]=1
-        fi
-        ;;
-      solidity)
-        if [ -z "${seen[solidity]+x}" ]; then
-          languages+=("solidity")
-          seen[solidity]=1
-        fi
-        ;;
-      rust)
-        if [ -z "${seen[rust]+x}" ]; then
-          languages+=("rust")
-          seen[rust]=1
-        fi
-        ;;
-      java)
-        if [ -z "${seen[java]+x}" ]; then
-          languages+=("java")
-          seen[java]=1
-        fi
-        ;;
-      docker)
-        if [ -z "${seen[docker]+x}" ]; then
-          languages+=("docker")
-          seen[docker]=1
-        fi
-        ;;
+      go)         _has_lang golang     || _add_lang golang ;;
+      node|react|vue|svelte) _has_lang typescript || _add_lang typescript ;;
+      python)     _has_lang python     || _add_lang python ;;
+      dotnet|unity) _has_lang csharp   || _add_lang csharp ;;
+      solidity)   _has_lang solidity   || _add_lang solidity ;;
+      rust)       _has_lang rust       || _add_lang rust ;;
+      java)       _has_lang java       || _add_lang java ;;
+      docker)     _has_lang docker     || _add_lang docker ;;
       # make, etc. — no language rules
     esac
   done
