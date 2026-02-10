@@ -107,6 +107,39 @@
         "Document trade-offs and risks",
         "Make recommendation with confidence level"
       ]
+    },
+    "convergent": {
+      "description": "Narrow multiple options to a single best solution",
+      "steps": [
+        "List all candidate solutions gathered so far",
+        "Define hard constraints (must-haves) and eliminate non-starters",
+        "Score remaining options on key criteria (complexity, risk, time, maintainability)",
+        "Identify the top 2 candidates and compare directly",
+        "Choose the winner and document why alternatives were rejected",
+        "Define success criteria for validating the chosen approach"
+      ]
+    },
+    "divergent": {
+      "description": "Generate multiple creative solutions before narrowing",
+      "steps": [
+        "State the problem clearly without solution bias",
+        "Generate at least 5 distinct approaches (quantity over quality)",
+        "Include at least one unconventional or contrarian approach",
+        "For each approach, note key strengths and assumptions",
+        "Group similar approaches and identify themes",
+        "Select 2-3 most promising for deeper analysis"
+      ]
+    },
+    "red-team": {
+      "description": "Adversarial analysis to find weaknesses and attack vectors",
+      "steps": [
+        "Define the system boundaries and trust model",
+        "Enumerate all entry points (APIs, inputs, events, webhooks)",
+        "For each entry point, brainstorm abuse scenarios",
+        "Check authentication, authorization, and rate limiting at each boundary",
+        "Identify data flows where sensitive info could leak",
+        "Propose mitigations ranked by severity and effort"
+      ]
     }
   },
   "practices": [
