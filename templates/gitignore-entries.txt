@@ -1,3 +1,7 @@
+# Claude Code (override global .gitignore which ignores .claude/)
+!.claude/
+.claude/settings.local.json
+
 # Claude Toolkit (runtime files)
 prd.json
 prd.json.bak

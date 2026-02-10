@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "# Optional: Block dev servers outside tmux to prevent zombie processes\n# Uncomment and customize as needed:\n# if echo \"$TOOL_INPUT\" | grep -qE '(npm run dev|yarn dev|pnpm dev)' && [ -z \"$TMUX\" ]; then\n#   echo 'BLOCKED: Run dev servers inside tmux to prevent zombies'\n#   exit 2\n# fi\nexit 0"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "# Optional: Auto-format reminder after file writes\n# Uncomment and customize for your formatter:\n# FILE=$(echo \"$TOOL_INPUT\" | jq -r '.file_path // .filePath // empty' 2>/dev/null)\n# if [ -n \"$FILE\" ]; then\n#   case \"$FILE\" in\n#     *.ts|*.tsx|*.js|*.jsx) npx prettier --write \"$FILE\" 2>/dev/null ;;\n#     *.go) gofmt -w \"$FILE\" 2>/dev/null ;;\n#     *.py) ruff format \"$FILE\" 2>/dev/null ;;\n#   esac\n# fi\nexit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
