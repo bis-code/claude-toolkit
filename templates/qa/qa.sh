@@ -11,6 +11,7 @@ SCOPE="all"
 SCAN_ONLY=false
 WORKTREE_BRANCH="main"
 USE_WORKTREE=true
+CUSTOM_PROMPT=""
 
 # Read config from .claude-toolkit.json if available
 if [ -f "$PROJECT_DIR/.claude-toolkit.json" ] && command -v jq &> /dev/null; then
@@ -43,6 +44,8 @@ while [[ $# -gt 0 ]]; do
     --branch) WORKTREE_BRANCH="$2"; USE_WORKTREE=true; shift 2 ;;
     --branch=*) WORKTREE_BRANCH="${1#*=}"; USE_WORKTREE=true; shift ;;
     --no-worktree) USE_WORKTREE=false; shift ;;
+    --prompt) CUSTOM_PROMPT="$2"; shift 2 ;;
+    --prompt=*) CUSTOM_PROMPT="${1#*=}"; shift ;;
     -h|--help)
       echo "Usage: qa.sh [OPTIONS]"
       echo ""
@@ -51,7 +54,8 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --max-loops N    Maximum iterations (default: 20)"
-      echo "  --scope SCOPE    Scan scope: all, api, web (default: all)"
+      echo "  --scope SCOPE    Scan scope: all, api, web, or monorepo project name (default: all)"
+      echo "  --prompt TEXT    Custom focus prompt (e.g., 'focus on N+1 queries')"
       echo "  --scan-only      Report only, no fixes"
       echo "  --branch NAME    Branch to create worktree from (default: main)"
       echo "  --no-worktree    Run in-place even in git repos"
@@ -147,9 +151,44 @@ STATE_FILE="$WORK_DIR/tools/qa/qa-state.json"
 PROGRESS_FILE="$WORK_DIR/tools/qa/qa-progress.txt"
 MARKER_FILE="$WORK_DIR/.qa-active"
 
+# ─────────────────────────────────────────────
+# Resolve scope for monorepo projects
+# ─────────────────────────────────────────────
+SCOPE_DIR=""
+if [ "$SCOPE" != "all" ]; then
+  # Try to resolve scope to a directory path using monorepo detection
+  TOOLKIT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  if [ -f "$TOOLKIT_LIB_DIR/.claude-toolkit.json" ]; then
+    TOOLKIT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd "$(jq -r '.project.toolkitDir // empty' "$TOOLKIT_LIB_DIR/.claude-toolkit.json" 2>/dev/null)" 2>/dev/null && pwd || echo "")"
+  fi
+  # Source detect.sh if available for monorepo resolution
+  for try_dir in "$SCRIPT_DIR/../../lib" "$HOME/.claude/toolkit/lib"; do
+    if [ -f "$try_dir/detect.sh" ]; then
+      source "$try_dir/detect.sh"
+      STRUCTURE=$(detect_project_structure "$PROJECT_DIR" 2>/dev/null || echo '{"type":"single"}')
+      if echo "$STRUCTURE" | jq -e '.type == "monorepo"' &>/dev/null; then
+        # Find matching project path
+        MATCHED_PATH=$(echo "$STRUCTURE" | jq -r --arg s "$SCOPE" '.projects[] | select(test($s))' 2>/dev/null | head -1)
+        if [ -n "$MATCHED_PATH" ]; then
+          SCOPE_DIR="$MATCHED_PATH"
+        fi
+      fi
+      break
+    fi
+  done
+  # Fallback: check if scope is a direct directory
+  if [ -z "$SCOPE_DIR" ] && [ -d "$PROJECT_DIR/$SCOPE" ]; then
+    SCOPE_DIR="$SCOPE"
+  fi
+fi
+
 # Initialize state file
 mkdir -p "$(dirname "$STATE_FILE")"
-echo '{"scope":"'"$SCOPE"'","scanOnly":'"$SCAN_ONLY"',"findings":[],"fixedCount":0,"reportedCount":0,"iteration":0}' > "$STATE_FILE"
+STATE_JSON='{"scope":"'"$SCOPE"'","scanOnly":'"$SCAN_ONLY"',"findings":[],"fixedCount":0,"reportedCount":0,"iteration":0'
+[ -n "$CUSTOM_PROMPT" ] && STATE_JSON+=',"customPrompt":"'"$(echo "$CUSTOM_PROMPT" | sed 's/"/\\"/g')"'"'
+[ -n "$SCOPE_DIR" ] && STATE_JSON+=',"scopeDir":"'"$SCOPE_DIR"'"'
+STATE_JSON+='}'
+echo "$STATE_JSON" | jq '.' > "$STATE_FILE"
 
 # Initialize progress file
 echo "# QA Progress Log" > "$PROGRESS_FILE"
@@ -161,6 +200,8 @@ echo "---" >> "$PROGRESS_FILE"
 echo "$([ "$USE_WORKTREE" = true ] && echo "$BRANCH" || echo "in-place")" > "$MARKER_FILE"
 
 echo "Starting QA Agent — Scope: $SCOPE, Max loops: $MAX_LOOPS, Scan only: $SCAN_ONLY"
+[ -n "$CUSTOM_PROMPT" ] && echo "Focus: $CUSTOM_PROMPT"
+[ -n "$SCOPE_DIR" ] && echo "Scope resolved to: $SCOPE_DIR"
 [ "$USE_WORKTREE" = true ] && echo "Branch: $BRANCH" && echo "Worktree: $WORKTREE_DIR"
 [ "$USE_WORKTREE" = false ] && echo "Mode: in-place at $WORK_DIR"
 echo ""

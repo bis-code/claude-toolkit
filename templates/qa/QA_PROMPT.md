@@ -17,13 +17,18 @@ Read these files to understand current state:
 - `tools/qa/qa-state.json` — current findings and progress
 - `tools/qa/qa-progress.txt` — patterns discovered in previous iterations
 - Check the `scope` field: "all", "api", "web", or a custom scope
+- Check the `scopeDir` field: if set, restrict scanning to this directory path
 - Check the `scanOnly` field: if true, never fix anything
+- Check the `customPrompt` field: if set, this is your **primary focus** for this run
 - Check the `iteration` field to know which iteration you are
+
+**Custom prompt behavior:** If `customPrompt` is set, prioritize findings related to that focus area. For example, if the prompt says "focus on N+1 queries", scan database access patterns first and prioritize those findings over general lint/test issues.
 
 **Understand the project** (first iteration only):
 - Read `.claude-toolkit.json` for configured commands and QA scan categories
 - Read `CLAUDE.md` for project conventions and tech stack
 - If neither exists, detect from Makefile, package.json, go.mod, *.csproj, Cargo.toml
+- Check `.claude/agents/` for domain-specific agents — their presence indicates stack expertise
 
 ## Step 2: Scan for Issues
 
@@ -59,6 +64,27 @@ Use the `qa.scanCategories` list to determine which categories apply. Use `comma
 13. Navigate to key pages, check for runtime errors, verify critical flows render
 
 If Playwright MCP or dev server is unavailable, skip browser testing.
+
+**Domain-specific checks (when domain agents exist in `.claude/agents/`):**
+
+Check for the presence of these agent files and add the corresponding checks to your scan:
+
+| Agent File | Additional Checks |
+|-----------|-------------------|
+| `blockchain-developer.md` | Gas optimization, reentrancy guards, flash loan attack vectors |
+| `smart-contract-reviewer.md` | Formal verification hints, upgrade safety, access control patterns |
+| `frontend-developer.md` | Core Web Vitals, accessibility (WCAG 2.1), bundle size |
+| `ui-designer.md` | Component consistency, responsive breakpoints, design token usage |
+| `graphql-architect.md` | N+1 via DataLoader, query complexity limits, schema validation |
+| `database-architect.md` | Index coverage, migration reversibility, connection pool sizing |
+| `ai-engineer.md` | Token budget enforcement, prompt injection defense, model fallbacks |
+| `prompt-engineer.md` | Prompt quality, hallucination mitigation, output format validation |
+| `payment-integration.md` | PCI compliance, webhook signature validation, idempotency keys |
+| `cloud-architect.md` | IaC drift detection, cost optimization, security group rules |
+| `kubernetes-architect.md` | Pod security standards, resource limits, liveness/readiness probes |
+| `observability-engineer.md` | SLI/SLO coverage, alert quality, dashboard completeness |
+
+Only check for agents that exist — do not assume any domain agents are installed.
 
 ## Step 3: Analyze Findings
 

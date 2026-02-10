@@ -29,6 +29,22 @@ Record which story you're working on. You will implement **ONE story** this iter
 
 **Update task**: `TaskUpdate(taskId="<id>", status="in_progress")` for the story you're picking up.
 
+### Domain Agent Awareness
+
+Check `.claude/agents/` for domain-specific agents. When planning your implementation, consider the expertise they represent:
+
+| Story Type | Reference Agents (if present) |
+|-----------|-------------------------------|
+| Smart contract / blockchain | `blockchain-developer.md`, `smart-contract-reviewer.md` |
+| Payment / billing / subscription | `payment-integration.md` |
+| UI / frontend component | `frontend-developer.md`, `ui-designer.md` |
+| API / backend endpoint | `graphql-architect.md`, `database-architect.md` |
+| AI / LLM feature | `ai-engineer.md`, `prompt-engineer.md` |
+| Infrastructure / deployment | `cloud-architect.md`, `kubernetes-architect.md` |
+| Monitoring / alerting | `observability-engineer.md` |
+
+If the story's prd.json includes a `domainAgents` array, those are the specific agents relevant to this story. Read their files for domain-specific patterns and constraints to follow during implementation.
+
 ## Step 2: Reasoning (Deep-Think)
 
 **If deep-think MCP tools are available**, reason before coding.
