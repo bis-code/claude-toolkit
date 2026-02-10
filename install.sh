@@ -314,7 +314,7 @@ if [ "$DRY_RUN" = true ]; then
   [ "$SKIP_RULES" = false ]  && info "  Rules: common ${DETECTED_LANGUAGES}" || warn "  Rules: SKIPPED"
   [ "$SKIP_SKILLS" = false ] && info "  Skills: 5 progressive disclosure skills" || warn "  Skills: SKIPPED"
   [ "$SKIP_HOOKS" = false ]  && info "  Hooks: PreToolUse, PostToolUse" || warn "  Hooks: SKIPPED"
-  [ "$SKIP_AGENTS" = false ] && info "  Agents: 7 specialized agents" || warn "  Agents: SKIPPED"
+  [ "$SKIP_AGENTS" = false ] && info "  Agents: 7 generic + domain-specific (auto-detected)" || warn "  Agents: SKIPPED"
   info "  Commands: $(ls "$TOOLKIT_DIR/commands/"*.md 2>/dev/null | wc -l | tr -d ' ') slash commands"
   echo ""
   info "MCP servers:"
@@ -385,11 +385,27 @@ else
   warn "Hooks: skipped"
 fi
 
-# Agents
+# Agents (generic + domain-specific)
 if [ "$SKIP_AGENTS" = false ]; then
-  install_agents "$PROJECT_DIR" "$TEMPLATES"
-  AGENT_COUNT=$(ls "$PROJECT_DIR/.claude/agents/"*.md 2>/dev/null | wc -l | tr -d ' ')
-  info ".claude/agents/ — $AGENT_COUNT agent definitions"
+  AGENT_DOMAINS=$(map_stack_to_agent_domains "$TECH_STACK")
+  DEEP_DOMAINS=$(detect_deep_domains "$PROJECT_DIR")
+  # Merge and deduplicate domains
+  ALL_DOMAINS=""
+  for d in $AGENT_DOMAINS $DEEP_DOMAINS; do
+    [[ " $ALL_DOMAINS " == *" $d "* ]] || ALL_DOMAINS="$ALL_DOMAINS $d"
+  done
+  ALL_DOMAINS="${ALL_DOMAINS# }"
+
+  install_agents "$PROJECT_DIR" "$TEMPLATES" "$ALL_DOMAINS"
+  GENERIC_COUNT=$(ls "$TEMPLATES/agents/"*.md 2>/dev/null | wc -l | tr -d ' ')
+  TOTAL_AGENT_COUNT=$(ls "$PROJECT_DIR/.claude/agents/"*.md 2>/dev/null | wc -l | tr -d ' ')
+  DOMAIN_AGENT_COUNT=$((TOTAL_AGENT_COUNT - GENERIC_COUNT))
+  if [ "$DOMAIN_AGENT_COUNT" -gt 0 ]; then
+    info ".claude/agents/ — $GENERIC_COUNT generic + $DOMAIN_AGENT_COUNT domain-specific = $TOTAL_AGENT_COUNT total"
+    info "  Domains: $ALL_DOMAINS"
+  else
+    info ".claude/agents/ — $TOTAL_AGENT_COUNT agent definitions"
+  fi
 else
   warn "Agents: skipped"
 fi
@@ -497,7 +513,7 @@ echo "  Installed:"
 [ "$SKIP_RULES" = false ]  && echo "    Rules:    common + ${DETECTED_LANGUAGES:-none}"
 [ "$SKIP_SKILLS" = false ] && echo "    Skills:   ${SKILL_COUNT:-0} skills"
 [ "$SKIP_HOOKS" = false ]  && echo "    Hooks:    PreToolUse, PostToolUse"
-[ "$SKIP_AGENTS" = false ] && echo "    Agents:   ${AGENT_COUNT:-0} agent definitions"
+[ "$SKIP_AGENTS" = false ] && echo "    Agents:   ${TOTAL_AGENT_COUNT:-0} (${GENERIC_COUNT:-0} generic + ${DOMAIN_AGENT_COUNT:-0} domain)"
 echo "    Commands: $(ls "$TOOLKIT_DIR/commands/"*.md 2>/dev/null | wc -l | tr -d ' ') slash commands"
 echo "    MCP:      $INSTALLED_MCPS"
 echo ""
