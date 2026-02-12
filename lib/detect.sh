@@ -9,9 +9,10 @@ _find_subproject_dirs() {
   # pnpm workspace
   if [ -f "$dir/pnpm-workspace.yaml" ]; then
     local globs
-    globs=$(grep -E '^\s*-\s*["\x27]' "$dir/pnpm-workspace.yaml" 2>/dev/null | sed "s/.*[\"']\(.*\)[\"'].*/\1/")
+    # Match quoted entries: - 'apps/*' or - "apps/*"
+    globs=$(grep -E "^[[:space:]]*-[[:space:]]*[\"']" "$dir/pnpm-workspace.yaml" 2>/dev/null | sed "s/.*[\"']\(.*\)[\"'].*/\1/")
     # Also handle unquoted entries like: - apps/*
-    [ -z "$globs" ] && globs=$(grep -E '^\s*-\s+\S' "$dir/pnpm-workspace.yaml" 2>/dev/null | sed 's/^\s*-\s*//')
+    [ -z "$globs" ] && globs=$(grep -E '^[[:space:]]*-[[:space:]]+[^[:space:]]' "$dir/pnpm-workspace.yaml" 2>/dev/null | sed 's/^[[:space:]]*-[[:space:]]*//')
     for glob_pattern in $globs; do
       local base_dir="${glob_pattern%/\*}"
       if [ -d "$dir/$base_dir" ]; then
@@ -350,8 +351,8 @@ detect_project_structure() {
   if [ -f "$dir/pnpm-workspace.yaml" ]; then
     # Parse workspace globs and resolve to actual directories
     local globs
-    globs=$(grep -E '^\s*-\s*["\x27]' "$dir/pnpm-workspace.yaml" 2>/dev/null | sed "s/.*[\"']\(.*\)[\"'].*/\1/")
-    [ -z "$globs" ] && globs=$(grep -E '^\s*-\s+\S' "$dir/pnpm-workspace.yaml" 2>/dev/null | sed 's/^\s*-\s*//')
+    globs=$(grep -E "^[[:space:]]*-[[:space:]]*[\"']" "$dir/pnpm-workspace.yaml" 2>/dev/null | sed "s/.*[\"']\(.*\)[\"'].*/\1/")
+    [ -z "$globs" ] && globs=$(grep -E '^[[:space:]]*-[[:space:]]+[^[:space:]]' "$dir/pnpm-workspace.yaml" 2>/dev/null | sed 's/^[[:space:]]*-[[:space:]]*//')
     for glob_pattern in $globs; do
       # Replace trailing /* with actual dirs
       local base_dir="${glob_pattern%/\*}"

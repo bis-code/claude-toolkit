@@ -25,7 +25,7 @@ install_skills() {
       [ -f "$file" ] || continue
       local filename
       filename="$(basename "$file")"
-      if [ ! -f "$dest_dir/$filename" ] || [ "${FORCE:-false}" = true ]; then
+      if [ ! -f "$dest_dir/$filename" ] || [ "${FORCE:-false}" = true ] || [ "${MODE:-install}" = "update" ]; then
         cp "$file" "$dest_dir/$filename"
       fi
     done

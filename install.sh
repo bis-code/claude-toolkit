@@ -210,11 +210,15 @@ if [ "$SUGGEST_PLAYWRIGHT" = true ]; then
   INSTALL_PLAYWRIGHT=true
 fi
 
-# Auto mode: install all MCP servers
+# Auto mode or update: install all / skip interactive selection
 if [ "$AUTO_MODE" = true ]; then
   INSTALL_PLAYWRIGHT=$SUGGEST_PLAYWRIGHT
   INSTALL_LEANN=true
   INSTALL_CONTEXT7=true
+elif [ "$MODE" = "update" ]; then
+  # On update: skip interactive selection, keep existing MCP config.
+  # install_mcp_config merges without overwriting, so existing servers are preserved.
+  info "Update mode — keeping existing MCP server selection"
 else
   # Interactive selection
   echo -e "\n    ${BOLD}OPTIONAL (toggle with number, Enter to confirm):${NC}"
@@ -251,49 +255,54 @@ fi
 
 header "4" "QA Configuration"
 
-TEST_CMD=$(detect_test_command "$PROJECT_DIR" "$TECH_STACK")
-LINT_CMD=$(detect_lint_command "$PROJECT_DIR" "$TECH_STACK")
-SCAN_CATS=$(detect_scan_categories "$TECH_STACK")
-
-if [ "$AUTO_MODE" = false ]; then
-  if [ -n "$TEST_CMD" ]; then
-    read -r -p "    Test command: $TEST_CMD  [Y/n/edit]: " ans
-    case "$ans" in
-      n|N) TEST_CMD="" ;;
-      "") ;;
-      *) TEST_CMD="$ans" ;;
-    esac
-  fi
-
-  if [ -n "$LINT_CMD" ]; then
-    read -r -p "    Lint command: $LINT_CMD  [Y/n/edit]: " ans
-    case "$ans" in
-      n|N) LINT_CMD="" ;;
-      "") ;;
-      *) LINT_CMD="$ans" ;;
-    esac
-  fi
+if [ "$MODE" = "update" ]; then
+  # On update: preserve existing QA config from .claude-toolkit.json
+  info "Update mode — keeping existing QA configuration"
 else
-  [ -n "$TEST_CMD" ] && info "Test command: $TEST_CMD"
-  [ -n "$LINT_CMD" ] && info "Lint command: $LINT_CMD"
-fi
+  TEST_CMD=$(detect_test_command "$PROJECT_DIR" "$TECH_STACK")
+  LINT_CMD=$(detect_lint_command "$PROJECT_DIR" "$TECH_STACK")
+  SCAN_CATS=$(detect_scan_categories "$TECH_STACK")
 
-# Default branch detection (git only)
-DEFAULT_BRANCH=""
-if [ "$IS_GIT_REPO" = true ]; then
-  DEFAULT_BRANCH=$(git -C "$PROJECT_DIR" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
   if [ "$AUTO_MODE" = false ]; then
-    read -r -p "    QA worktree branch: $DEFAULT_BRANCH  [Y/n/edit]: " ans
-    case "$ans" in
-      n|N) DEFAULT_BRANCH="main" ;;
-      "") ;;
-      *) DEFAULT_BRANCH="$ans" ;;
-    esac
+    if [ -n "$TEST_CMD" ]; then
+      read -r -p "    Test command: $TEST_CMD  [Y/n/edit]: " ans
+      case "$ans" in
+        n|N) TEST_CMD="" ;;
+        "") ;;
+        *) TEST_CMD="$ans" ;;
+      esac
+    fi
+
+    if [ -n "$LINT_CMD" ]; then
+      read -r -p "    Lint command: $LINT_CMD  [Y/n/edit]: " ans
+      case "$ans" in
+        n|N) LINT_CMD="" ;;
+        "") ;;
+        *) LINT_CMD="$ans" ;;
+      esac
+    fi
   else
-    info "QA worktree branch: $DEFAULT_BRANCH"
+    [ -n "$TEST_CMD" ] && info "Test command: $TEST_CMD"
+    [ -n "$LINT_CMD" ] && info "Lint command: $LINT_CMD"
   fi
-else
-  info "QA worktree: disabled (no git repo — QA will run in-place)"
+
+  # Default branch detection (git only)
+  DEFAULT_BRANCH=""
+  if [ "$IS_GIT_REPO" = true ]; then
+    DEFAULT_BRANCH=$(git -C "$PROJECT_DIR" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
+    if [ "$AUTO_MODE" = false ]; then
+      read -r -p "    QA worktree branch: $DEFAULT_BRANCH  [Y/n/edit]: " ans
+      case "$ans" in
+        n|N) DEFAULT_BRANCH="main" ;;
+        "") ;;
+        *) DEFAULT_BRANCH="$ans" ;;
+      esac
+    else
+      info "QA worktree branch: $DEFAULT_BRANCH"
+    fi
+  else
+    info "QA worktree: disabled (no git repo — QA will run in-place)"
+  fi
 fi
 
 # ─────────────────────────────────────────────
@@ -439,7 +448,13 @@ fi
 
 # .claude-toolkit.json
 TOOLKIT_CONFIG="$PROJECT_DIR/.claude-toolkit.json"
-if [ ! -f "$TOOLKIT_CONFIG" ] || [ "$FORCE" = true ] || [ "$MODE" = "update" ]; then
+if [ "$MODE" = "update" ] && [ -f "$TOOLKIT_CONFIG" ]; then
+  # Update mode: bump version and re-detected fields, preserve user config
+  STACK_JSON=$(to_json_array "$TECH_STACK")
+  LANG_JSON=$(to_json_array "$DETECTED_LANGUAGES")
+  update_toolkit_config "$TOOLKIT_CONFIG" "$TOOLKIT_VERSION" "$STACK_JSON" "$LANG_JSON" "$PKG_MANAGER"
+  info ".claude-toolkit.json — version and stack updated (user config preserved)"
+elif [ ! -f "$TOOLKIT_CONFIG" ] || [ "$FORCE" = true ]; then
   SCAN_JSON=$(to_json_array "$SCAN_CATS")
   STACK_JSON=$(to_json_array "$TECH_STACK")
   LANG_JSON=$(to_json_array "$DETECTED_LANGUAGES")

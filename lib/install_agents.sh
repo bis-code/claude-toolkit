@@ -23,7 +23,7 @@ install_agents() {
     [ -f "$agent_file" ] || continue
     local filename
     filename="$(basename "$agent_file")"
-    if [ ! -f "$agents_dest/$filename" ] || [ "${FORCE:-false}" = true ]; then
+    if [ ! -f "$agents_dest/$filename" ] || [ "${FORCE:-false}" = true ] || [ "${MODE:-install}" = "update" ]; then
       cp "$agent_file" "$agents_dest/$filename"
     fi
   done
@@ -36,7 +36,7 @@ install_agents() {
       [ -f "$agent_file" ] || continue
       local filename
       filename="$(basename "$agent_file")"
-      if [ ! -f "$agents_dest/$filename" ] || [ "${FORCE:-false}" = true ]; then
+      if [ ! -f "$agents_dest/$filename" ] || [ "${FORCE:-false}" = true ] || [ "${MODE:-install}" = "update" ]; then
         cp "$agent_file" "$agents_dest/$filename"
       fi
     done
