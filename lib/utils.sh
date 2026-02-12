@@ -82,6 +82,21 @@ merge_hooks_json() {
   ' "$target" "$source_file" > "$tmp_file" && mv "$tmp_file" "$target"
 }
 
+# Update .claude-toolkit.json during --update: bump version and re-detected fields,
+# preserve user's commands, qa, ralph, and mcpServers sections.
+update_toolkit_config() {
+  local config_file="$1" version="$2" stack_json="$3" lang_json="$4" pkg_mgr="$5"
+  jq --arg v "$version" \
+     --argjson stack "$stack_json" \
+     --argjson langs "$lang_json" \
+     --arg pkg "$pkg_mgr" \
+     '.version = $v |
+      .project.techStack = $stack |
+      .project.languages = $langs |
+      .project.packageManager = (if $pkg == "" then null else $pkg end)' \
+     "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+}
+
 # Convert space-separated string to JSON array
 to_json_array() {
   local input="$1"

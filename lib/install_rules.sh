@@ -32,7 +32,7 @@ _copy_rules_dir() {
     [ -f "$file" ] || continue
     local filename
     filename="$(basename "$file")"
-    if [ ! -f "$dest/$filename" ] || [ "${FORCE:-false}" = true ]; then
+    if [ ! -f "$dest/$filename" ] || [ "${FORCE:-false}" = true ] || [ "${MODE:-install}" = "update" ]; then
       cp "$file" "$dest/$filename"
     fi
   done
