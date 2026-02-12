@@ -21,6 +21,7 @@ teardown() {
   assert_file_exists "$TEST_PROJECT_DIR/.claude/rules/common/testing.md"
   assert_file_exists "$TEST_PROJECT_DIR/.claude/rules/common/security.md"
   assert_file_exists "$TEST_PROJECT_DIR/.claude/rules/common/performance.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/rules/common/search-strategy.md"
 }
 
 @test "install_rules: installs golang rules for go stack" {
