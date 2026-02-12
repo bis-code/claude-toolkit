@@ -25,8 +25,12 @@ install_skills() {
       [ -f "$file" ] || continue
       local filename
       filename="$(basename "$file")"
-      if [ ! -f "$dest_dir/$filename" ] || [ "${FORCE:-false}" = true ] || [ "${MODE:-install}" = "update" ]; then
-        cp "$file" "$dest_dir/$filename"
+      if declare -F _tracked_copy &>/dev/null; then
+        _tracked_copy "$file" "$dest_dir/$filename" ".claude/skills/$skill_name/$filename"
+      else
+        if [ ! -f "$dest_dir/$filename" ] || [ "${FORCE:-false}" = true ] || [ "${MODE:-install}" = "update" ]; then
+          cp "$file" "$dest_dir/$filename"
+        fi
       fi
     done
   done

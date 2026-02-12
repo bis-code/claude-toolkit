@@ -97,6 +97,127 @@ update_toolkit_config() {
      "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
 }
 
+# ─────────────────────────────────────────────
+# Update tracking: counters, managed files, deprecation
+# ─────────────────────────────────────────────
+
+# Reset tracking globals. If config_file is non-empty and has managedFiles,
+# load them into OLD_MANAGED_FILES for deprecation comparison.
+init_update_tracking() {
+  local config_file="$1"
+  UPDATE_COUNT=0
+  ADDED_COUNT=0
+  MANAGED_FILES=()
+  OLD_MANAGED_FILES=()
+
+  if [ -n "$config_file" ] && [ -f "$config_file" ]; then
+    local raw
+    raw=$(jq -r '.managedFiles // [] | .[]' "$config_file" 2>/dev/null)
+    if [ -n "$raw" ]; then
+      while IFS= read -r path; do
+        OLD_MANAGED_FILES+=("$path")
+      done <<< "$raw"
+    fi
+  fi
+}
+
+# Copy src to dest, tracking the relative path and incrementing counters.
+# Always records rel_path in MANAGED_FILES regardless of copy decision.
+# Creates parent directories as needed.
+_tracked_copy() {
+  local src="$1" dest="$2" rel_path="$3"
+
+  MANAGED_FILES+=("$rel_path")
+
+  if [ ! -f "$dest" ]; then
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    ADDED_COUNT=$((ADDED_COUNT + 1))
+  elif [ "${FORCE:-false}" = true ] || [ "${MODE:-install}" = "update" ]; then
+    cp "$src" "$dest"
+    UPDATE_COUNT=$((UPDATE_COUNT + 1))
+  fi
+  # else: file exists, normal install — skip
+}
+
+# Write sorted MANAGED_FILES array into config's .managedFiles key.
+write_managed_files() {
+  local config_file="$1"
+
+  # Sort the array
+  local sorted
+  sorted=$(printf '%s\n' "${MANAGED_FILES[@]}" | sort)
+
+  # Build JSON array
+  local json_array="["
+  local first=true
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    [ "$first" = true ] && first=false || json_array+=","
+    json_array+="\"$path\""
+  done <<< "$sorted"
+  json_array+="]"
+
+  jq --argjson mf "$json_array" '.managedFiles = $mf' "$config_file" > "$config_file.tmp" \
+    && mv "$config_file.tmp" "$config_file"
+}
+
+# Compare OLD_MANAGED_FILES vs MANAGED_FILES. For paths in old but not new,
+# warn if file still exists on disk. No output on first install.
+detect_deprecated_files() {
+  local project_dir="$1"
+
+  # No prior list means first install — nothing to compare
+  [ "${#OLD_MANAGED_FILES[@]}" -eq 0 ] && return 0
+
+  for old_path in "${OLD_MANAGED_FILES[@]}"; do
+    # Check if still in current managed files
+    local found=false
+    for new_path in "${MANAGED_FILES[@]}"; do
+      if [ "$old_path" = "$new_path" ]; then
+        found=true
+        break
+      fi
+    done
+
+    if [ "$found" = false ] && [ -f "$project_dir/$old_path" ]; then
+      warn "$old_path is no longer in toolkit templates (consider removing)"
+    fi
+  done
+}
+
+# Count .md files in .claude/{agents,rules,skills} that are NOT in MANAGED_FILES.
+count_preserved_files() {
+  local project_dir="$1"
+  local count=0
+
+  for dir in "$project_dir/.claude/agents" "$project_dir/.claude/rules" "$project_dir/.claude/skills"; do
+    [ -d "$dir" ] || continue
+    while IFS= read -r file; do
+      [ -z "$file" ] && continue
+      local rel_path="${file#"$project_dir/"}"
+      local is_managed=false
+      for mf in "${MANAGED_FILES[@]}"; do
+        if [ "$rel_path" = "$mf" ]; then
+          is_managed=true
+          break
+        fi
+      done
+      [ "$is_managed" = false ] && count=$((count + 1))
+    done < <(find "$dir" -name "*.md" -type f 2>/dev/null)
+  done
+
+  echo "$count"
+}
+
+# Print a summary line: "Updated N files, added M new, preserved K user files"
+print_update_summary() {
+  local project_dir="$1"
+  local preserved
+  preserved=$(count_preserved_files "$project_dir")
+  info "Updated $UPDATE_COUNT files, added $ADDED_COUNT new, preserved $preserved user files"
+}
+
 # Convert space-separated string to JSON array
 to_json_array() {
   local input="$1"
