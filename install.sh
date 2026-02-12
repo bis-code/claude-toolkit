@@ -340,30 +340,25 @@ fi
 # Step 5: Install files
 # ─────────────────────────────────────────────
 
+TOOLKIT_CONFIG="$PROJECT_DIR/.claude-toolkit.json"
+init_update_tracking "$TOOLKIT_CONFIG"
+
 header "5" "Installing"
 
 # tools/ralph/
 mkdir -p "$PROJECT_DIR/tools/ralph"
-if [ ! -f "$PROJECT_DIR/tools/ralph/ralph.sh" ] || [ "$FORCE" = true ] || [ "$MODE" = "update" ]; then
-  cp "$TEMPLATES/ralph/ralph.sh" "$PROJECT_DIR/tools/ralph/ralph.sh"
-  cp "$TEMPLATES/ralph/RALPH.md" "$PROJECT_DIR/tools/ralph/RALPH.md"
-  cp "$TEMPLATES/ralph/prd.json.example" "$PROJECT_DIR/tools/ralph/prd.json.example"
-  chmod +x "$PROJECT_DIR/tools/ralph/ralph.sh"
-  info "tools/ralph/ — 3 files"
-else
-  warn "tools/ralph/ already exists (use --force to overwrite)"
-fi
+_tracked_copy "$TEMPLATES/ralph/ralph.sh" "$PROJECT_DIR/tools/ralph/ralph.sh" "tools/ralph/ralph.sh"
+_tracked_copy "$TEMPLATES/ralph/RALPH.md" "$PROJECT_DIR/tools/ralph/RALPH.md" "tools/ralph/RALPH.md"
+_tracked_copy "$TEMPLATES/ralph/prd.json.example" "$PROJECT_DIR/tools/ralph/prd.json.example" "tools/ralph/prd.json.example"
+chmod +x "$PROJECT_DIR/tools/ralph/ralph.sh"
+info "tools/ralph/ — 3 files"
 
 # tools/qa/
 mkdir -p "$PROJECT_DIR/tools/qa"
-if [ ! -f "$PROJECT_DIR/tools/qa/qa.sh" ] || [ "$FORCE" = true ] || [ "$MODE" = "update" ]; then
-  cp "$TEMPLATES/qa/qa.sh" "$PROJECT_DIR/tools/qa/qa.sh"
-  cp "$TEMPLATES/qa/QA_PROMPT.md" "$PROJECT_DIR/tools/qa/QA_PROMPT.md"
-  chmod +x "$PROJECT_DIR/tools/qa/qa.sh"
-  info "tools/qa/ — 2 files"
-else
-  warn "tools/qa/ already exists (use --force to overwrite)"
-fi
+_tracked_copy "$TEMPLATES/qa/qa.sh" "$PROJECT_DIR/tools/qa/qa.sh" "tools/qa/qa.sh"
+_tracked_copy "$TEMPLATES/qa/QA_PROMPT.md" "$PROJECT_DIR/tools/qa/QA_PROMPT.md" "tools/qa/QA_PROMPT.md"
+chmod +x "$PROJECT_DIR/tools/qa/qa.sh"
+info "tools/qa/ — 2 files"
 
 # Rules
 if [ "$SKIP_RULES" = false ] && [ -n "$DETECTED_LANGUAGES" ]; then
@@ -438,16 +433,11 @@ INSTALLED_MCPS=$(jq -r '.mcpServers | keys | join(", ")' "$PROJECT_DIR/.mcp.json
 info ".mcp.json — servers: $INSTALLED_MCPS"
 
 # .deep-think.json
-if [ ! -f "$PROJECT_DIR/.deep-think.json" ] || [ "$FORCE" = true ] || [ "$MODE" = "update" ]; then
-  cp "$TEMPLATES/deep-think.json" "$PROJECT_DIR/.deep-think.json"
-  STRATEGY_COUNT=$(jq '.strategies | length' "$TEMPLATES/deep-think.json")
-  info ".deep-think.json — $STRATEGY_COUNT strategies"
-else
-  warn ".deep-think.json already exists (use --force to overwrite)"
-fi
+_tracked_copy "$TEMPLATES/deep-think.json" "$PROJECT_DIR/.deep-think.json" ".deep-think.json"
+STRATEGY_COUNT=$(jq '.strategies | length' "$TEMPLATES/deep-think.json")
+info ".deep-think.json — $STRATEGY_COUNT strategies"
 
 # .claude-toolkit.json
-TOOLKIT_CONFIG="$PROJECT_DIR/.claude-toolkit.json"
 if [ "$MODE" = "update" ] && [ -f "$TOOLKIT_CONFIG" ]; then
   # Update mode: bump version and re-detected fields, preserve user config
   STACK_JSON=$(to_json_array "$TECH_STACK")
@@ -501,6 +491,13 @@ else
   warn ".claude-toolkit.json already exists (use --force to overwrite)"
 fi
 
+# Write managed files list + update summary
+write_managed_files "$TOOLKIT_CONFIG"
+if [ "$MODE" = "update" ]; then
+  detect_deprecated_files "$PROJECT_DIR"
+  print_update_summary "$PROJECT_DIR"
+fi
+
 # .gitignore — append entries (git repos only)
 if [ "$IS_GIT_REPO" = true ] && [ -f "$TEMPLATES/gitignore-entries.txt" ]; then
   append_gitignore "$PROJECT_DIR/.gitignore" "$TEMPLATES/gitignore-entries.txt"
@@ -522,7 +519,11 @@ install_commands "$TOOLKIT_DIR"
 
 echo ""
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}${BOLD}Done!${NC} Toolkit v$TOOLKIT_VERSION installed."
+if [ "$MODE" = "update" ]; then
+  echo -e "${GREEN}${BOLD}Done!${NC} Toolkit v$TOOLKIT_VERSION updated."
+else
+  echo -e "${GREEN}${BOLD}Done!${NC} Toolkit v$TOOLKIT_VERSION installed."
+fi
 echo ""
 echo "  Installed:"
 [ "$SKIP_RULES" = false ]  && echo "    Rules:    common + ${DETECTED_LANGUAGES:-none}"

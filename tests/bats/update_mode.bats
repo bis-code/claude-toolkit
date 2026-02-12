@@ -255,3 +255,165 @@ EOF
   install_rules "$TEST_PROJECT_DIR" "golang" "$templates_dir"
   assert_file_contains "$TEST_PROJECT_DIR/.claude/rules/common/coding-style.md" "customized"
 }
+
+# ══════════════════════════════════════════════
+# _tracked_copy + update tracking
+# ══════════════════════════════════════════════
+
+@test "_tracked_copy: creates new file and increments ADDED_COUNT" {
+  init_update_tracking ""
+  mkdir -p "$TEST_PROJECT_DIR/src"
+  echo "source content" > "$TEST_PROJECT_DIR/src/file.md"
+
+  _tracked_copy "$TEST_PROJECT_DIR/src/file.md" "$TEST_PROJECT_DIR/dest/file.md" "dest/file.md"
+
+  assert_file_exists "$TEST_PROJECT_DIR/dest/file.md"
+  assert_file_contains "$TEST_PROJECT_DIR/dest/file.md" "source content"
+  [ "$ADDED_COUNT" -eq 1 ]
+  [ "$UPDATE_COUNT" -eq 0 ]
+}
+
+@test "_tracked_copy: overwrites in update mode, increments UPDATE_COUNT" {
+  init_update_tracking ""
+  mkdir -p "$TEST_PROJECT_DIR/src" "$TEST_PROJECT_DIR/dest"
+  echo "new content" > "$TEST_PROJECT_DIR/src/file.md"
+  echo "old content" > "$TEST_PROJECT_DIR/dest/file.md"
+
+  MODE=update _tracked_copy "$TEST_PROJECT_DIR/src/file.md" "$TEST_PROJECT_DIR/dest/file.md" "dest/file.md"
+
+  assert_file_contains "$TEST_PROJECT_DIR/dest/file.md" "new content"
+  [ "$UPDATE_COUNT" -eq 1 ]
+  [ "$ADDED_COUNT" -eq 0 ]
+}
+
+@test "_tracked_copy: skips existing file in normal install" {
+  init_update_tracking ""
+  mkdir -p "$TEST_PROJECT_DIR/src" "$TEST_PROJECT_DIR/dest"
+  echo "new content" > "$TEST_PROJECT_DIR/src/file.md"
+  echo "old content" > "$TEST_PROJECT_DIR/dest/file.md"
+
+  _tracked_copy "$TEST_PROJECT_DIR/src/file.md" "$TEST_PROJECT_DIR/dest/file.md" "dest/file.md"
+
+  assert_file_contains "$TEST_PROJECT_DIR/dest/file.md" "old content"
+  [ "$UPDATE_COUNT" -eq 0 ]
+  [ "$ADDED_COUNT" -eq 0 ]
+}
+
+@test "_tracked_copy: always records path in MANAGED_FILES" {
+  init_update_tracking ""
+  mkdir -p "$TEST_PROJECT_DIR/src" "$TEST_PROJECT_DIR/dest"
+  echo "content" > "$TEST_PROJECT_DIR/src/file.md"
+  echo "existing" > "$TEST_PROJECT_DIR/dest/file.md"
+
+  # Even when skipping copy, path is tracked
+  _tracked_copy "$TEST_PROJECT_DIR/src/file.md" "$TEST_PROJECT_DIR/dest/file.md" "dest/file.md"
+  _tracked_copy "$TEST_PROJECT_DIR/src/file.md" "$TEST_PROJECT_DIR/dest/file2.md" "dest/file2.md"
+
+  [ "${#MANAGED_FILES[@]}" -eq 2 ]
+  [[ " ${MANAGED_FILES[*]} " == *" dest/file.md "* ]]
+  [[ " ${MANAGED_FILES[*]} " == *" dest/file2.md "* ]]
+}
+
+# ── write_managed_files ──
+
+@test "write_managed_files: writes sorted array to config" {
+  local config="$TEST_PROJECT_DIR/.claude-toolkit.json"
+  echo '{"version":"2.0.0"}' > "$config"
+  init_update_tracking ""
+  MANAGED_FILES=(".claude/rules/common/b.md" ".claude/agents/a.md" ".claude/rules/common/a.md")
+
+  write_managed_files "$config"
+
+  local first second third count
+  count=$(jq '.managedFiles | length' "$config")
+  first=$(jq -r '.managedFiles[0]' "$config")
+  second=$(jq -r '.managedFiles[1]' "$config")
+  third=$(jq -r '.managedFiles[2]' "$config")
+  [ "$count" -eq 3 ]
+  [ "$first" = ".claude/agents/a.md" ]
+  [ "$second" = ".claude/rules/common/a.md" ]
+  [ "$third" = ".claude/rules/common/b.md" ]
+}
+
+# ── detect_deprecated_files ──
+
+@test "detect_deprecated_files: warns about removed templates" {
+  local config="$TEST_PROJECT_DIR/.claude-toolkit.json"
+  cat > "$config" <<'EOF'
+{"version":"2.0.0","managedFiles":[".claude/agents/old-agent.md",".claude/agents/current.md"]}
+EOF
+  init_update_tracking "$config"
+  # Simulate current install only tracking "current.md"
+  MANAGED_FILES=(".claude/agents/current.md")
+  # Create the deprecated file on disk
+  mkdir -p "$TEST_PROJECT_DIR/.claude/agents"
+  echo "old" > "$TEST_PROJECT_DIR/.claude/agents/old-agent.md"
+
+  local output
+  output=$(detect_deprecated_files "$TEST_PROJECT_DIR")
+
+  [[ "$output" == *"old-agent.md"* ]]
+}
+
+@test "detect_deprecated_files: silent on first install" {
+  init_update_tracking ""
+  MANAGED_FILES=(".claude/agents/code-reviewer.md")
+
+  local output
+  output=$(detect_deprecated_files "$TEST_PROJECT_DIR")
+
+  [ -z "$output" ]
+}
+
+@test "detect_deprecated_files: ignores already-deleted files" {
+  local config="$TEST_PROJECT_DIR/.claude-toolkit.json"
+  cat > "$config" <<'EOF'
+{"version":"2.0.0","managedFiles":[".claude/agents/deleted.md",".claude/agents/current.md"]}
+EOF
+  init_update_tracking "$config"
+  MANAGED_FILES=(".claude/agents/current.md")
+  mkdir -p "$TEST_PROJECT_DIR/.claude/agents"
+  # deleted.md does NOT exist on disk
+
+  local output
+  output=$(detect_deprecated_files "$TEST_PROJECT_DIR")
+
+  [ -z "$output" ]
+}
+
+# ── count_preserved_files ──
+
+@test "count_preserved_files: counts non-managed files" {
+  init_update_tracking ""
+  MANAGED_FILES=(".claude/agents/managed.md" ".claude/rules/common/managed.md")
+  mkdir -p "$TEST_PROJECT_DIR/.claude/agents" "$TEST_PROJECT_DIR/.claude/rules/common" "$TEST_PROJECT_DIR/.claude/skills/qa"
+  echo "m" > "$TEST_PROJECT_DIR/.claude/agents/managed.md"
+  echo "u" > "$TEST_PROJECT_DIR/.claude/agents/user-custom.md"
+  echo "m" > "$TEST_PROJECT_DIR/.claude/rules/common/managed.md"
+  echo "u" > "$TEST_PROJECT_DIR/.claude/rules/common/user-rule.md"
+  echo "u" > "$TEST_PROJECT_DIR/.claude/skills/qa/user-skill.md"
+
+  local count
+  count=$(count_preserved_files "$TEST_PROJECT_DIR")
+
+  [ "$count" -eq 3 ]
+}
+
+# ── print_update_summary ──
+
+@test "print_update_summary: shows correct counts" {
+  init_update_tracking ""
+  UPDATE_COUNT=5
+  ADDED_COUNT=2
+  MANAGED_FILES=(".claude/agents/managed.md")
+  mkdir -p "$TEST_PROJECT_DIR/.claude/agents"
+  echo "m" > "$TEST_PROJECT_DIR/.claude/agents/managed.md"
+  echo "u" > "$TEST_PROJECT_DIR/.claude/agents/user.md"
+
+  local output
+  output=$(print_update_summary "$TEST_PROJECT_DIR")
+
+  [[ "$output" == *"Updated 5"* ]]
+  [[ "$output" == *"added 2 new"* ]]
+  [[ "$output" == *"preserved 1 user"* ]]
+}
