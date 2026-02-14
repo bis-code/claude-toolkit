@@ -60,9 +60,9 @@ echo -e "\n${BOLD}Running:${NC} install.sh --auto --project-dir $TEST_DIR"
 "$TOOLKIT_ROOT/install.sh" --auto --project-dir "$TEST_DIR" 2>&1 || true
 
 echo -e "\n${BOLD}Checking: Project files${NC}"
-assert "tools/ralph/ralph.sh exists" test -f "$TEST_DIR/tools/ralph/ralph.sh"
-assert "tools/ralph/RALPH.md exists" test -f "$TEST_DIR/tools/ralph/RALPH.md"
-assert "tools/ralph/ralph.sh is executable" test -x "$TEST_DIR/tools/ralph/ralph.sh"
+assert "tools/ralph/prd.json.example exists" test -f "$TEST_DIR/tools/ralph/prd.json.example"
+assert "tools/ralph/ralph.sh removed" test ! -f "$TEST_DIR/tools/ralph/ralph.sh"
+assert "tools/ralph/RALPH.md removed" test ! -f "$TEST_DIR/tools/ralph/RALPH.md"
 assert "tools/qa/qa.sh exists" test -f "$TEST_DIR/tools/qa/qa.sh"
 assert "tools/qa/QA_PROMPT.md exists" test -f "$TEST_DIR/tools/qa/QA_PROMPT.md"
 assert "tools/qa/qa.sh is executable" test -x "$TEST_DIR/tools/qa/qa.sh"

@@ -19,6 +19,7 @@ EXPECTED_SKILLS=(
   "code-review"
   "docs"
   "plan"
+  "ralph"
   "refactor-clean"
   "security-review"
   "tdd-workflow"
@@ -44,7 +45,7 @@ SKILL_AGENT_MAP=(
 
 # ── Installation: each skill installs correctly ──
 
-@test "install_skills: installs all 7 expected skills" {
+@test "install_skills: installs all 8 expected skills" {
   local templates_dir="$TOOLKIT_ROOT/templates"
   install_skills "$TEST_PROJECT_DIR" "$templates_dir"
 
@@ -54,13 +55,13 @@ SKILL_AGENT_MAP=(
   done
 }
 
-@test "install_skills: installs exactly 7 skills (no extras)" {
+@test "install_skills: installs exactly 8 skills (no extras)" {
   local templates_dir="$TOOLKIT_ROOT/templates"
   install_skills "$TEST_PROJECT_DIR" "$templates_dir"
 
   local count
   count=$(find "$TEST_PROJECT_DIR/.claude/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
-  [ "$count" -eq 7 ]
+  [ "$count" -eq 8 ]
 }
 
 # ── Deleted skills no longer ship ──
@@ -104,6 +105,8 @@ SKILL_AGENT_MAP=(
 
 @test "each SKILL.md references its paired agent" {
   for skill in "${EXPECTED_SKILLS[@]}"; do
+    # ralph is a multi-agent orchestrator — tested separately in ralph_skill.bats
+    [ "$skill" = "ralph" ] && continue
     local agent="${SKILL_AGENT_MAP[$skill]}"
     local skill_file="$TOOLKIT_ROOT/templates/skills/$skill/SKILL.md"
     assert_file_exists "$skill_file"

@@ -347,11 +347,10 @@ header "5" "Installing"
 
 # tools/ralph/
 mkdir -p "$PROJECT_DIR/tools/ralph"
-_tracked_copy "$TEMPLATES/ralph/ralph.sh" "$PROJECT_DIR/tools/ralph/ralph.sh" "tools/ralph/ralph.sh"
-_tracked_copy "$TEMPLATES/ralph/RALPH.md" "$PROJECT_DIR/tools/ralph/RALPH.md" "tools/ralph/RALPH.md"
 _tracked_copy "$TEMPLATES/ralph/prd.json.example" "$PROJECT_DIR/tools/ralph/prd.json.example" "tools/ralph/prd.json.example"
-chmod +x "$PROJECT_DIR/tools/ralph/ralph.sh"
-info "tools/ralph/ — 3 files"
+# Clean up deprecated files (ralph.sh and RALPH.md replaced by /ralph skill)
+rm -f "$PROJECT_DIR/tools/ralph/ralph.sh" "$PROJECT_DIR/tools/ralph/RALPH.md"
+info "tools/ralph/ — 1 file (prd.json.example)"
 
 # tools/qa/
 mkdir -p "$PROJECT_DIR/tools/qa"

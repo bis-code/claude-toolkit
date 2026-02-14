@@ -34,5 +34,32 @@
       "leann-server",
       "context7"
     ]
-  }
+  },
+  "managedFiles": [
+    ".claude/agents/build-error-resolver.md",
+    ".claude/agents/code-reviewer.md",
+    ".claude/agents/doc-updater.md",
+    ".claude/agents/planner.md",
+    ".claude/agents/refactor-cleaner.md",
+    ".claude/agents/security-reviewer.md",
+    ".claude/agents/tdd-guide.md",
+    ".claude/rules/common/coding-style.md",
+    ".claude/rules/common/git-workflow.md",
+    ".claude/rules/common/performance.md",
+    ".claude/rules/common/search-strategy.md",
+    ".claude/rules/common/security.md",
+    ".claude/rules/common/testing.md",
+    ".claude/skills/build-fix/SKILL.md",
+    ".claude/skills/code-review/SKILL.md",
+    ".claude/skills/docs/SKILL.md",
+    ".claude/skills/plan/SKILL.md",
+    ".claude/skills/ralph/SKILL.md",
+    ".claude/skills/refactor-clean/SKILL.md",
+    ".claude/skills/security-review/SKILL.md",
+    ".claude/skills/tdd-workflow/SKILL.md",
+    ".deep-think.json",
+    "tools/qa/QA_PROMPT.md",
+    "tools/qa/qa.sh",
+    "tools/ralph/prd.json.example"
+  ]
 }
