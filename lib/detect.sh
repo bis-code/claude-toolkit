@@ -61,6 +61,8 @@ _detect_tech_stack_in_dir() {
 
   { [ -f "$dir/Dockerfile" ] || [ -f "$dir/docker-compose.yml" ] || [ -f "$dir/docker-compose.yaml" ]; } && echo "docker"
 
+  [ -f "$dir/angular.json" ] && echo "angular"
+
   if [ -f "$dir/package.json" ]; then
     if grep -q '"react"' "$dir/package.json" 2>/dev/null; then
       echo "react"
@@ -207,7 +209,7 @@ map_stack_to_languages() {
   for item in $stack; do
     case "$item" in
       go)         _has_lang golang     || _add_lang golang ;;
-      node|react|vue|svelte) _has_lang typescript || _add_lang typescript ;;
+      node|react|vue|svelte|angular) _has_lang typescript || _add_lang typescript ;;
       python)     _has_lang python     || _add_lang python ;;
       dotnet|unity) _has_lang csharp   || _add_lang csharp ;;
       solidity)   _has_lang solidity   || _add_lang solidity ;;
@@ -233,13 +235,22 @@ map_stack_to_agent_domains() {
   for item in $stack; do
     case "$item" in
       go)         _has_domain golang     || _add_domain golang ;;
-      node|react|vue|svelte) _has_domain react || _add_domain react ;;
+      node)       _has_domain typescript || _add_domain typescript ;;
+      react)      _has_domain frontend   || _add_domain frontend ;;
+      vue)        _has_domain frontend   || _add_domain frontend
+                  _has_domain vue        || _add_domain vue ;;
+      svelte)     _has_domain frontend   || _add_domain frontend
+                  _has_domain svelte     || _add_domain svelte ;;
+      angular)    _has_domain frontend   || _add_domain frontend
+                  _has_domain angular    || _add_domain angular ;;
+      python)     _has_domain python     || _add_domain python ;;
+      rust)       _has_domain rust       || _add_domain rust ;;
+      java)       _has_domain java       || _add_domain java ;;
       dotnet)     _has_domain dotnet     || _add_domain dotnet ;;
       unity)      _has_domain unity      || _add_domain unity
                   _has_domain dotnet     || _add_domain dotnet ;;
       solidity)   _has_domain blockchain || _add_domain blockchain ;;
       docker)     _has_domain docker     || _add_domain docker ;;
-      # make, java, rust, python — no domain agents yet
     esac
   done
 

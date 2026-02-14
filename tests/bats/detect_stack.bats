@@ -118,6 +118,13 @@ teardown() {
   [[ "$result" == *"docker"* ]]
 }
 
+@test "detect_tech_stack: angular.json detects angular" {
+  touch "$TEST_PROJECT_DIR/angular.json"
+  create_package_json "$TEST_PROJECT_DIR"
+  result=$(detect_tech_stack "$TEST_PROJECT_DIR")
+  [[ "$result" == *"angular"* ]]
+}
+
 # ── detect_package_manager ──
 
 @test "detect_package_manager: pnpm-lock.yaml detects pnpm" {
@@ -204,6 +211,11 @@ teardown() {
 @test "map_stack_to_languages: docker maps to docker" {
   result=$(map_stack_to_languages "docker")
   [[ "$result" == *"docker"* ]]
+}
+
+@test "map_stack_to_languages: angular maps to typescript" {
+  result=$(map_stack_to_languages "angular")
+  [[ "$result" == *"typescript"* ]]
 }
 
 @test "map_stack_to_languages: complex stack deduplicates" {
