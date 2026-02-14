@@ -22,22 +22,21 @@ curl -fsSL https://raw.githubusercontent.com/bis-code/claude-toolkit/main/instal
 
 ### /ralph — Autonomous Feature Builder
 
-Builds features from GitHub issues using the Ralph pattern: fresh Claude Code instances per user story with persistent state.
+Builds features from GitHub issues using an interactive orchestrator with subagent delegation and approval gates.
 
 ```bash
 # In Claude Code:
-/ralph --issues 42,43     # Generate PRD from issues
-/ralph --label feature    # Generate PRD from labeled issues
-
-# Then run the orchestrator:
-./tools/ralph/ralph.sh
+/ralph --issues 42,43     # Build from specific issues
+/ralph --label feature    # Build from labeled issues
+/ralph --auto             # Auto-approve gates (CI mode)
 ```
 
 **How it works:**
 1. `/ralph` fetches GitHub issues and generates a `prd.json` with user stories
-2. `ralph.sh` spawns fresh Claude instances per story (prevents context degradation)
-3. Each iteration: deep-think reasoning → TDD implementation → commit → state update
-4. Final iteration runs a full QA pass before declaring complete
+2. For each story: Explore → Plan → **Approval Gate** → Implement (TDD) → Review → **Approval Gate** → Commit
+3. Specialized subagents handle each phase (planner, tdd-guide, code-reviewer, security-reviewer)
+4. Domain agents spawned when story labels match installed agents (e.g., blockchain verification)
+5. Final QA pass runs the full test suite before completion
 
 ### /qa — Autonomous QA Agent
 
@@ -62,8 +61,6 @@ Scans, fixes, and reports quality issues. Uses a git worktree for isolation (git
 
 | File | Purpose |
 |------|---------|
-| `tools/ralph/ralph.sh` | Orchestrator script |
-| `tools/ralph/RALPH.md` | Per-iteration prompt |
 | `tools/ralph/prd.json.example` | PRD format reference |
 | `tools/qa/qa.sh` | QA orchestrator script |
 | `tools/qa/QA_PROMPT.md` | QA per-iteration prompt |
@@ -203,15 +200,19 @@ cd ~/.claude/toolkit && git pull
 
 ## How It Works
 
-Both `/ralph` and `/qa` use the same core pattern:
+`/ralph` and `/qa` use different patterns:
 
-1. **Bash orchestrator** (`ralph.sh` / `qa.sh`) spawns fresh Claude Code instances
-2. **Per-iteration prompt** (`RALPH.md` / `QA_PROMPT.md`) guides each instance
-3. **State files** (`prd.json` / `qa-state.json`) persist progress between iterations
-4. **Deep-think MCP** provides structured reasoning for complex decisions
-5. **Claude Code Tasks** (`TaskCreate`/`TaskUpdate`) survive context compactions
+**`/ralph`** — Interactive skill with subagent delegation:
+1. Runs inside the user's session (system prompt loaded once)
+2. Spawns specialized subagents via Task tool (planner, tdd-guide, code-reviewer)
+3. Human approval gates between plan and review phases
+4. State: `prd.json` + `progress.txt` + deep-think checkpoints
 
-Fresh instances prevent context window degradation. State files ensure nothing is lost.
+**`/qa`** — Bash orchestrator with fresh instances:
+1. `qa.sh` spawns fresh Claude Code instances per scan category
+2. `QA_PROMPT.md` guides each instance
+3. State: `qa-state.json` persists progress between iterations
+4. Creates a git worktree for isolation
 
 ## License
 
