@@ -1,6 +1,6 @@
 # Claude Code Toolkit
 
-Autonomous development tooling for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Install `/ralph` (feature builder) and `/qa` (quality agent) into any project with one command.
+Autonomous development tooling for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Installs specialized agents, interactive skills, and rules into any project with one command.
 
 ## Quick Start
 
@@ -60,19 +60,67 @@ Scans, triages, and fixes quality issues using parallel subagents with interacti
 
 ### In your project
 
-| File | Purpose |
-|------|---------|
-| `tools/ralph/prd.json.example` | PRD format reference |
-| `.claude/skills/*/SKILL.md` | Skill definitions (qa, ralph, etc.) |
-| `.claude-toolkit.json` | Project config (test commands, QA categories) |
-| `.mcp.json` | MCP server config (merged, not overwritten) |
-| `.deep-think.json` | Reasoning strategies |
+| Path | Count | Purpose |
+|------|-------|---------|
+| `.claude/skills/*/SKILL.md` | 12 | User-facing slash commands (see [Skills](#skills)) |
+| `.claude/agents/*.md` | 10+ | Generic + domain-specific agents (see [Agents](#agents)) |
+| `.claude/rules/common/*.md` | 6 | Universal rules: testing, security, git, coding style, performance, search |
+| `.claude/rules/<lang>/*.md` | varies | Language-specific rules (auto-detected) |
+| `.claude/hooks/hooks.json` | 1 | PreToolUse and PostToolUse hooks |
+| `tools/ralph/prd.json.example` | 1 | PRD format reference |
+| `.claude-toolkit.json` | 1 | Project config (test commands, QA categories) |
+| `.mcp.json` | 1 | MCP server config (merged, not overwritten) |
+| `.deep-think.json` | 1 | Reasoning strategies |
 
 ### Globally (~/.claude/)
 
-| File | Purpose |
-|------|---------|
-| `commands/*.md` | Slash commands (verify, search, ship-day, etc.) |
+| Path | Count | Purpose |
+|------|-------|---------|
+| `commands/*.md` | 10 | Global slash commands (verify, search, ship-day, etc.) |
+
+## Agents
+
+Agents are specialized subprocesses spawned via the Task tool. They run as isolated subagents with their own system prompt and cannot see the parent session's context.
+
+### Generic agents (always installed)
+
+| Agent | Role |
+|-------|------|
+| `code-reviewer` | Code quality review — diffs, correctness, coverage gaps |
+| `security-reviewer` | OWASP-focused vulnerability and auth bypass detection |
+| `architect-reviewer` | Module boundaries, coupling analysis, dependency direction |
+| `performance-reviewer` | N+1 queries, unbounded results, blocking operations |
+| `planner` | Implementation planning with test strategy and parallel decomposition |
+| `tdd-guide` | TDD enforcement with red-green-refactor and test skeleton generation |
+| `build-error-resolver` | Build error diagnosis and minimal targeted fixes |
+| `doc-updater` | Documentation maintenance after code changes |
+| `refactor-cleaner` | Dead code removal, duplication consolidation |
+| `incident-debugger` | Structured hypothesis-driven debugging |
+
+### Domain agents (auto-detected)
+
+Installed based on detected tech stack. Examples: `go-backend-architect`, `smart-contract-reviewer`, `prompt-engineer`, `cloud-architect`, `react-developer`.
+
+Available domains: ai, blockchain, database, docker, dotnet, golang, graphql, kubernetes, observability, react, saas, unity.
+
+## Skills
+
+Skills are user-facing slash commands defined in `.claude/skills/*/SKILL.md`. Each skill orchestrates one or more agents to complete a workflow.
+
+| Skill | Command | Description |
+|-------|---------|-------------|
+| ralph | `/ralph` | Autonomous feature builder from GitHub issues |
+| qa | `/qa` | Three-phase QA orchestrator (scan, triage, fix) |
+| plan | `/plan` | Implementation planning with subagent delegation |
+| code-review | `/code-review` | Code quality review with diff analysis |
+| security-review | `/security-review` | Security-focused review |
+| architect-review | `/architect-review` | Architecture and coupling review |
+| performance-review | `/performance-review` | Performance analysis |
+| tdd-workflow | `/tdd-workflow` | Guided TDD session |
+| build-fix | `/build-fix` | Diagnose and fix build errors |
+| docs | `/docs` | Update documentation after changes |
+| refactor-clean | `/refactor-clean` | Dead code and duplication cleanup |
+| incident-debug | `/incident-debug` | Structured debugging workflow |
 
 ## Rules Architecture
 
@@ -224,18 +272,13 @@ cd ~/.claude/toolkit && git pull
 
 ## How It Works
 
-Both `/ralph` and `/qa` are interactive skills with subagent delegation:
+The toolkit has three layers:
 
-**`/ralph`** — Feature builder:
-1. Runs inside the user's session (system prompt loaded once)
-2. Spawns specialized subagents via Task tool (planner, tdd-guide, code-reviewer)
-3. Human approval gates between plan and review phases
-4. State: `prd.json` + `progress.txt` + deep-think checkpoints
+- **Skills** are user-facing slash commands (e.g., `/ralph`, `/qa`). They run in the user's session and orchestrate the workflow.
+- **Agents** are specialized subprocesses spawned by skills via the Task tool. Each agent has its own system prompt and runs in isolation.
+- **Rules** are `.md` files injected into the system prompt for every session and subagent. They enforce coding standards, security practices, and project conventions.
 
-**`/qa`** — Three-phase QA orchestrator:
-1. Phase 1: Parallel scan — launches 7+ agents simultaneously
-2. Phase 2: Interactive triage — severity-ranked findings with user approval
-3. Phase 3: Guided fix — targeted agents apply fixes with individual commits
+Complex skills like `/ralph` and `/qa` orchestrate multiple agents with approval gates and state management. Simpler skills (e.g., `/code-review`, `/plan`, `/build-fix`) spawn a single paired agent, collect results, and present them to the user.
 
 ## License
 
