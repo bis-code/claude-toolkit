@@ -312,6 +312,9 @@ EOF
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/security-reviewer.md"
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/tdd-guide.md"
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/planner.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/architect-reviewer.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/performance-reviewer.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/incident-debugger.md"
 }
 
 @test "install_agents: domain agents installed when domains detected" {
