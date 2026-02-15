@@ -74,6 +74,40 @@ Scans, triages, and fixes quality issues using parallel subagents with interacti
 |------|---------|
 | `commands/*.md` | Slash commands (verify, search, ship-day, etc.) |
 
+## Rules Architecture
+
+Every `.md` file under `.claude/rules/` is injected into the system prompt for **every session and subagent**. This makes rules powerful but expensive — each line costs tokens on every interaction.
+
+### Three Tiers
+
+| Tier | Path | Installed By | Contents |
+|------|------|-------------|----------|
+| **Common** | `.claude/rules/common/` | Toolkit | Universal principles: testing, security, git, coding style, performance, search strategy |
+| **Language** | `.claude/rules/<lang>/` | Toolkit (auto-detected) | Framework-specific patterns: Go error handling, React hooks, Rust ownership, etc. |
+| **Project** | `.claude/rules/` (root) | You | Project-specific constraints, conventions, and overrides |
+
+Common rules are installed for all projects. Language rules are added based on detected tech stack (e.g., a Go project gets `golang/` rules automatically).
+
+### Token Budget Guidelines
+
+- **~50 lines per rule file** — enough for principles, too short for tutorials
+- **Principles and constraints belong in rules** — "always validate input at API boundaries"
+- **Tutorials, examples, and API reference do NOT** — put these in regular files that agents can `Read` on demand
+- **If a rule file exceeds 60 lines**, consider splitting it or moving reference material out
+
+### Adding Project-Specific Rules
+
+Create `.md` files directly in `.claude/rules/` for your project:
+
+```
+.claude/rules/
+├── common/              # Toolkit-managed (don't edit)
+├── golang/              # Toolkit-managed (don't edit)
+└── my-project-rules.md  # Your rules (project-specific)
+```
+
+Keep project rules focused on what's unique to your codebase — naming conventions, architectural boundaries, deployment constraints. The common and language rules already cover general best practices.
+
 ## MCP Servers
 
 | Server | Tier | Purpose |
