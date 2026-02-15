@@ -18,12 +18,7 @@
       "missing-tests",
       "todo-audit"
     ],
-    "maxFixLines": 30,
-    "worktreeFromBranch": null
-  },
-  "ralph": {
-    "maxLoops": 30,
-    "stuckThreshold": 3
+    "maxFixLines": 30
   },
   "mcpServers": {
     "required": [
@@ -53,13 +48,12 @@
     ".claude/skills/code-review/SKILL.md",
     ".claude/skills/docs/SKILL.md",
     ".claude/skills/plan/SKILL.md",
+    ".claude/skills/qa/SKILL.md",
     ".claude/skills/ralph/SKILL.md",
     ".claude/skills/refactor-clean/SKILL.md",
     ".claude/skills/security-review/SKILL.md",
     ".claude/skills/tdd-workflow/SKILL.md",
     ".deep-think.json",
-    "tools/qa/QA_PROMPT.md",
-    "tools/qa/qa.sh",
     "tools/ralph/prd.json.example"
   ]
 }

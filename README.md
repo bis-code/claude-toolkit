@@ -38,22 +38,23 @@ Builds features from GitHub issues using an interactive orchestrator with subage
 4. Domain agents spawned when story labels match installed agents (e.g., blockchain verification)
 5. Final QA pass runs the full test suite before completion
 
-### /qa — Autonomous QA Agent
+### /qa — Three-Phase QA Orchestrator
 
-Scans, fixes, and reports quality issues. Uses a git worktree for isolation (git repos) or runs in-place (workspaces).
+Scans, triages, and fixes quality issues using parallel subagents with interactive approval.
 
 ```bash
 # In Claude Code:
-/qa                       # Full scan
+/qa                       # Full scan with interactive triage
 /qa --scope api           # Backend only
 /qa --scan-only           # Report only, no fixes
+/qa --auto                # Auto-fix critical+high, issue medium, skip low
+/qa --focus "auth"        # Boost severity of auth-related findings
 ```
 
 **How it works:**
-1. Creates a git worktree from your default branch (or runs in-place for non-git dirs)
-2. Spawns fresh Claude instances per scan category
-3. Fixes small issues (< 30 lines), reports larger ones as GitHub issues
-4. Creates a PR with all fixes when done (git repos only)
+1. **Phase 1 — Scan**: Launches 7+ specialized agents in parallel (code-reviewer, security-reviewer, refactor-cleaner, etc.)
+2. **Phase 2 — Triage**: Merges findings into a severity-ranked table. User picks what to fix, issue, or skip.
+3. **Phase 3 — Fix**: Spawns targeted agents for each approved fix. Each fix: apply → test → commit individually.
 
 ## What Gets Installed
 
@@ -62,8 +63,7 @@ Scans, fixes, and reports quality issues. Uses a git worktree for isolation (git
 | File | Purpose |
 |------|---------|
 | `tools/ralph/prd.json.example` | PRD format reference |
-| `tools/qa/qa.sh` | QA orchestrator script |
-| `tools/qa/QA_PROMPT.md` | QA per-iteration prompt |
+| `.claude/skills/*/SKILL.md` | Skill definitions (qa, ralph, etc.) |
 | `.claude-toolkit.json` | Project config (test commands, QA categories) |
 | `.mcp.json` | MCP server config (merged, not overwritten) |
 | `.deep-think.json` | Reasoning strategies |
@@ -72,8 +72,7 @@ Scans, fixes, and reports quality issues. Uses a git worktree for isolation (git
 
 | File | Purpose |
 |------|---------|
-| `commands/ralph.md` | `/ralph` command |
-| `commands/qa.md` | `/qa` command |
+| `commands/*.md` | Slash commands (verify, search, ship-day, etc.) |
 
 ## MCP Servers
 
@@ -101,8 +100,7 @@ The installer generates `.claude-toolkit.json` with your project's settings:
   },
   "qa": {
     "scanCategories": ["tests", "lint", "missing-tests", "todo-audit"],
-    "maxFixLines": 30,
-    "worktreeFromBranch": "main"
+    "maxFixLines": 30
   }
 }
 ```
@@ -111,10 +109,10 @@ Edit this file to customize QA behavior for your project.
 
 ### Project Types
 
-| Type | When | QA Behavior |
-|------|------|-------------|
-| `repository` | Git repo detected | Uses worktree for isolated QA (default) |
-| `workspace` | No git repo | Runs QA in-place, skips .gitignore |
+| Type | When | Behavior |
+|------|------|----------|
+| `repository` | Git repo detected | Full git integration (branches, commits, PRs) |
+| `workspace` | No git repo | Runs in-place, skips .gitignore |
 
 ## Non-Git Workspaces
 
@@ -127,16 +125,8 @@ cd ~/work/coding
 
 **What's different in workspace mode:**
 - `.claude-toolkit.json` has `"type": "workspace"`
-- `qa.sh` runs in-place (no worktree isolation)
 - `.gitignore` modifications are skipped
 - Tech stack detection scans the directory as-is
-
-**`qa.sh` flags for workspaces:**
-```bash
-./tools/qa/qa.sh                  # Runs in-place automatically
-./tools/qa/qa.sh --scan-only      # Report only, no fixes
-./tools/qa/qa.sh --no-worktree    # Force in-place mode (even in git repos)
-```
 
 ## Auto-Detection
 
@@ -178,7 +168,7 @@ claude login
 CLAUDE_CONFIG_DIR=~/.claude-work claude login
 ```
 
-Global commands (`/ralph`, `/qa`) need to be installed in both config dirs:
+Global commands need to be installed in both config dirs:
 ```bash
 cp -r ~/.claude/commands ~/.claude-work/commands
 ```
@@ -200,19 +190,18 @@ cd ~/.claude/toolkit && git pull
 
 ## How It Works
 
-`/ralph` and `/qa` use different patterns:
+Both `/ralph` and `/qa` are interactive skills with subagent delegation:
 
-**`/ralph`** — Interactive skill with subagent delegation:
+**`/ralph`** — Feature builder:
 1. Runs inside the user's session (system prompt loaded once)
 2. Spawns specialized subagents via Task tool (planner, tdd-guide, code-reviewer)
 3. Human approval gates between plan and review phases
 4. State: `prd.json` + `progress.txt` + deep-think checkpoints
 
-**`/qa`** — Bash orchestrator with fresh instances:
-1. `qa.sh` spawns fresh Claude Code instances per scan category
-2. `QA_PROMPT.md` guides each instance
-3. State: `qa-state.json` persists progress between iterations
-4. Creates a git worktree for isolation
+**`/qa`** — Three-phase QA orchestrator:
+1. Phase 1: Parallel scan — launches 7+ agents simultaneously
+2. Phase 2: Interactive triage — severity-ranked findings with user approval
+3. Phase 3: Guided fix — targeted agents apply fixes with individual commits
 
 ## License
 
