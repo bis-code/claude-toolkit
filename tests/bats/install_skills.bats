@@ -15,9 +15,12 @@ teardown() {
 # ── Expected skill set ──
 
 EXPECTED_SKILLS=(
+  "architect-review"
   "build-fix"
   "code-review"
   "docs"
+  "incident-debug"
+  "performance-review"
   "plan"
   "qa"
   "ralph"
@@ -35,9 +38,12 @@ DELETED_SKILLS=(
 # Maps skill name → paired agent name
 declare -A SKILL_AGENT_MAP
 SKILL_AGENT_MAP=(
+  ["architect-review"]="architect-reviewer"
   ["build-fix"]="build-error-resolver"
   ["code-review"]="code-reviewer"
   ["docs"]="doc-updater"
+  ["incident-debug"]="incident-debugger"
+  ["performance-review"]="performance-reviewer"
   ["plan"]="planner"
   ["refactor-clean"]="refactor-cleaner"
   ["security-review"]="security-reviewer"
@@ -46,7 +52,7 @@ SKILL_AGENT_MAP=(
 
 # ── Installation: each skill installs correctly ──
 
-@test "install_skills: installs all 9 expected skills" {
+@test "install_skills: installs all 12 expected skills" {
   local templates_dir="$TOOLKIT_ROOT/templates"
   install_skills "$TEST_PROJECT_DIR" "$templates_dir"
 
@@ -56,13 +62,13 @@ SKILL_AGENT_MAP=(
   done
 }
 
-@test "install_skills: installs exactly 9 skills (no extras)" {
+@test "install_skills: installs exactly 12 skills (no extras)" {
   local templates_dir="$TOOLKIT_ROOT/templates"
   install_skills "$TEST_PROJECT_DIR" "$templates_dir"
 
   local count
   count=$(find "$TEST_PROJECT_DIR/.claude/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
-  [ "$count" -eq 9 ]
+  [ "$count" -eq 12 ]
 }
 
 # ── Deleted skills no longer ship ──
