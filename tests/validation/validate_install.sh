@@ -63,9 +63,7 @@ echo -e "\n${BOLD}Checking: Project files${NC}"
 assert "tools/ralph/prd.json.example exists" test -f "$TEST_DIR/tools/ralph/prd.json.example"
 assert "tools/ralph/ralph.sh removed" test ! -f "$TEST_DIR/tools/ralph/ralph.sh"
 assert "tools/ralph/RALPH.md removed" test ! -f "$TEST_DIR/tools/ralph/RALPH.md"
-assert "tools/qa/qa.sh exists" test -f "$TEST_DIR/tools/qa/qa.sh"
-assert "tools/qa/QA_PROMPT.md exists" test -f "$TEST_DIR/tools/qa/QA_PROMPT.md"
-assert "tools/qa/qa.sh is executable" test -x "$TEST_DIR/tools/qa/qa.sh"
+assert "tools/qa/ removed (replaced by skill)" test ! -d "$TEST_DIR/tools/qa"
 
 echo -e "\n${BOLD}Checking: Config files${NC}"
 assert ".mcp.json exists" test -f "$TEST_DIR/.mcp.json"
@@ -97,8 +95,13 @@ assert ".gitignore exists" test -f "$TEST_DIR/.gitignore"
 assert "prd.json in .gitignore" grep -q "prd.json" "$TEST_DIR/.gitignore"
 
 echo -e "\n${BOLD}Checking: Global commands${NC}"
-assert "~/.claude/commands/ralph.md" test -f "$HOME/.claude/commands/ralph.md"
-assert "~/.claude/commands/qa.md" test -f "$HOME/.claude/commands/qa.md"
+assert "~/.claude/commands/ralph.md removed (now a skill)" test ! -f "$HOME/.claude/commands/ralph.md"
+assert "~/.claude/commands/qa.md removed (now a skill)" test ! -f "$HOME/.claude/commands/qa.md"
+
+echo -e "\n${BOLD}Checking: Skills${NC}"
+assert ".claude/skills/qa/ exists" test -d "$TEST_DIR/.claude/skills/qa"
+assert ".claude/skills/qa/SKILL.md exists" test -f "$TEST_DIR/.claude/skills/qa/SKILL.md"
+assert ".claude/skills/ralph/ exists" test -d "$TEST_DIR/.claude/skills/ralph"
 
 # Summary
 echo ""

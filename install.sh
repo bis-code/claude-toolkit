@@ -146,7 +146,7 @@ if [ "$IS_GIT_REPO" = true ]; then
   info "Git repository: $PROJECT_NAME"
 else
   info "Workspace (no git): $PROJECT_NAME"
-  warn "QA will run in-place (no worktree isolation without git)"
+  info "Non-git workspace detected"
 fi
 
 TECH_STACK=$(detect_tech_stack "$PROJECT_DIR")
@@ -286,23 +286,6 @@ else
     [ -n "$LINT_CMD" ] && info "Lint command: $LINT_CMD"
   fi
 
-  # Default branch detection (git only)
-  DEFAULT_BRANCH=""
-  if [ "$IS_GIT_REPO" = true ]; then
-    DEFAULT_BRANCH=$(git -C "$PROJECT_DIR" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "main")
-    if [ "$AUTO_MODE" = false ]; then
-      read -r -p "    QA worktree branch: $DEFAULT_BRANCH  [Y/n/edit]: " ans
-      case "$ans" in
-        n|N) DEFAULT_BRANCH="main" ;;
-        "") ;;
-        *) DEFAULT_BRANCH="$ans" ;;
-      esac
-    else
-      info "QA worktree branch: $DEFAULT_BRANCH"
-    fi
-  else
-    info "QA worktree: disabled (no git repo — QA will run in-place)"
-  fi
 fi
 
 # ─────────────────────────────────────────────
@@ -352,12 +335,11 @@ _tracked_copy "$TEMPLATES/ralph/prd.json.example" "$PROJECT_DIR/tools/ralph/prd.
 rm -f "$PROJECT_DIR/tools/ralph/ralph.sh" "$PROJECT_DIR/tools/ralph/RALPH.md"
 info "tools/ralph/ — 1 file (prd.json.example)"
 
-# tools/qa/
-mkdir -p "$PROJECT_DIR/tools/qa"
-_tracked_copy "$TEMPLATES/qa/qa.sh" "$PROJECT_DIR/tools/qa/qa.sh" "tools/qa/qa.sh"
-_tracked_copy "$TEMPLATES/qa/QA_PROMPT.md" "$PROJECT_DIR/tools/qa/QA_PROMPT.md" "tools/qa/QA_PROMPT.md"
-chmod +x "$PROJECT_DIR/tools/qa/qa.sh"
-info "tools/qa/ — 2 files"
+# Clean up deprecated tools/qa/ (replaced by /qa skill)
+if [ -d "$PROJECT_DIR/tools/qa" ]; then
+  rm -rf "$PROJECT_DIR/tools/qa"
+  info "tools/qa/ — removed (replaced by /qa skill)"
+fi
 
 # Rules
 if [ "$SKIP_RULES" = false ] && [ -n "$DETECTED_LANGUAGES" ]; then
@@ -471,12 +453,7 @@ elif [ ! -f "$TOOLKIT_CONFIG" ] || [ "$FORCE" = true ]; then
   },
   "qa": {
     "scanCategories": $SCAN_JSON,
-    "maxFixLines": 30,
-    "worktreeFromBranch": $([ -n "$DEFAULT_BRANCH" ] && echo "\"$DEFAULT_BRANCH\"" || echo "null")
-  },
-  "ralph": {
-    "maxLoops": 30,
-    "stuckThreshold": 3
+    "maxFixLines": 30
   },
   "mcpServers": {
     "required": ["deep-think"],
