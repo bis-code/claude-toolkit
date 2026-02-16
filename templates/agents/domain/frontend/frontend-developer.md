@@ -1,6 +1,6 @@
 ---
 name: frontend-developer
-description: "Frontend developer for React/Vue/Svelte/Node. Advises on component architecture, state management, performance, accessibility, and Core Web Vitals."
+description: "Framework-agnostic frontend expert. Advises on Core Web Vitals, accessibility (WCAG 2.1 AA), responsive design, bundle optimization, and component architecture patterns."
 allowed_tools:
   - Read
   - Glob

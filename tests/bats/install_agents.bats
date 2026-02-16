@@ -20,24 +20,48 @@ teardown() {
   [[ "$result" == *"golang"* ]]
 }
 
-@test "map_stack_to_agent_domains: node maps to react" {
+@test "map_stack_to_agent_domains: node maps to typescript" {
   result=$(map_stack_to_agent_domains "node")
-  [[ "$result" == *"react"* ]]
+  [[ "$result" == *"typescript"* ]]
+  [[ "$result" != *"frontend"* ]]
 }
 
-@test "map_stack_to_agent_domains: react maps to react" {
+@test "map_stack_to_agent_domains: react maps to frontend" {
   result=$(map_stack_to_agent_domains "react")
-  [[ "$result" == *"react"* ]]
+  [[ "$result" == *"frontend"* ]]
 }
 
-@test "map_stack_to_agent_domains: vue maps to react" {
+@test "map_stack_to_agent_domains: vue maps to frontend and vue" {
   result=$(map_stack_to_agent_domains "vue")
-  [[ "$result" == *"react"* ]]
+  [[ "$result" == *"frontend"* ]]
+  [[ "$result" == *"vue"* ]]
 }
 
-@test "map_stack_to_agent_domains: svelte maps to react" {
+@test "map_stack_to_agent_domains: svelte maps to frontend and svelte" {
   result=$(map_stack_to_agent_domains "svelte")
-  [[ "$result" == *"react"* ]]
+  [[ "$result" == *"frontend"* ]]
+  [[ "$result" == *"svelte"* ]]
+}
+
+@test "map_stack_to_agent_domains: angular maps to frontend and angular" {
+  result=$(map_stack_to_agent_domains "angular")
+  [[ "$result" == *"frontend"* ]]
+  [[ "$result" == *"angular"* ]]
+}
+
+@test "map_stack_to_agent_domains: python maps to python" {
+  result=$(map_stack_to_agent_domains "python")
+  [[ "$result" == *"python"* ]]
+}
+
+@test "map_stack_to_agent_domains: rust maps to rust" {
+  result=$(map_stack_to_agent_domains "rust")
+  [[ "$result" == *"rust"* ]]
+}
+
+@test "map_stack_to_agent_domains: java maps to java" {
+  result=$(map_stack_to_agent_domains "java")
+  [[ "$result" == *"java"* ]]
 }
 
 @test "map_stack_to_agent_domains: dotnet maps to dotnet" {
@@ -69,14 +93,15 @@ teardown() {
 @test "map_stack_to_agent_domains: complex stack returns multiple domains" {
   result=$(map_stack_to_agent_domains "go node react solidity docker")
   [[ "$result" == *"golang"* ]]
-  [[ "$result" == *"react"* ]]
+  [[ "$result" == *"frontend"* ]]
+  [[ "$result" == *"typescript"* ]]
   [[ "$result" == *"blockchain"* ]]
   [[ "$result" == *"docker"* ]]
 }
 
-@test "map_stack_to_agent_domains: deduplicates domains" {
-  result=$(map_stack_to_agent_domains "node react vue svelte")
-  count=$(echo "$result" | tr ' ' '\n' | grep -c "^react$")
+@test "map_stack_to_agent_domains: deduplicates frontend domain" {
+  result=$(map_stack_to_agent_domains "react vue svelte angular")
+  count=$(echo "$result" | tr ' ' '\n' | grep -c "^frontend$")
   [ "$count" -eq 1 ]
 }
 
@@ -324,9 +349,9 @@ EOF
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/smart-contract-reviewer.md"
 }
 
-@test "install_agents: react domain agents installed" {
+@test "install_agents: frontend domain agents installed" {
   local templates_dir="$TOOLKIT_ROOT/templates"
-  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "react"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "frontend"
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/frontend-developer.md"
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/ui-designer.md"
 }
@@ -339,7 +364,7 @@ EOF
 
 @test "install_agents: multiple domains install all relevant agents" {
   local templates_dir="$TOOLKIT_ROOT/templates"
-  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "blockchain react golang"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "blockchain frontend golang"
   # Generic always present
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/code-reviewer.md"
   # Domain agents
@@ -428,4 +453,46 @@ EOF
   local templates_dir="$TOOLKIT_ROOT/templates"
   install_agents "$TEST_PROJECT_DIR" "$templates_dir" "unity"
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/unity-developer.md"
+}
+
+@test "install_agents: python domain agent installed" {
+  local templates_dir="$TOOLKIT_ROOT/templates"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "python"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/python-developer.md"
+}
+
+@test "install_agents: typescript domain agent installed" {
+  local templates_dir="$TOOLKIT_ROOT/templates"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "typescript"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/typescript-expert.md"
+}
+
+@test "install_agents: rust domain agent installed" {
+  local templates_dir="$TOOLKIT_ROOT/templates"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "rust"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/rust-developer.md"
+}
+
+@test "install_agents: java domain agent installed" {
+  local templates_dir="$TOOLKIT_ROOT/templates"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "java"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/java-developer.md"
+}
+
+@test "install_agents: angular domain agent installed" {
+  local templates_dir="$TOOLKIT_ROOT/templates"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "angular"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/angular-developer.md"
+}
+
+@test "install_agents: vue domain agent installed" {
+  local templates_dir="$TOOLKIT_ROOT/templates"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "vue"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/vue-developer.md"
+}
+
+@test "install_agents: svelte domain agent installed" {
+  local templates_dir="$TOOLKIT_ROOT/templates"
+  install_agents "$TEST_PROJECT_DIR" "$templates_dir" "svelte"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/svelte-developer.md"
 }
