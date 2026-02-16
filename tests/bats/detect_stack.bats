@@ -218,6 +218,65 @@ teardown() {
   [[ "$result" == *"typescript"* ]]
 }
 
+# ── workspace mode ──
+
+@test "detect_tech_stack: workspace with nested git repos" {
+  # Workspace dir (no .git at root), two sub-repos
+  mkdir -p "$TEST_PROJECT_DIR/api"
+  mkdir "$TEST_PROJECT_DIR/api/.git"
+  create_go_mod "$TEST_PROJECT_DIR/api"
+
+  mkdir -p "$TEST_PROJECT_DIR/web"
+  mkdir "$TEST_PROJECT_DIR/web/.git"
+  create_package_json "$TEST_PROJECT_DIR/web" '{"react": "^18.0.0"}'
+
+  result=$(detect_tech_stack "$TEST_PROJECT_DIR")
+  [[ "$result" == *"go"* ]]
+  [[ "$result" == *"node"* ]]
+  [[ "$result" == *"react"* ]]
+}
+
+@test "detect_tech_stack: workspace with deeply nested git repos" {
+  # Repos nested 2 levels deep (within maxdepth 4)
+  mkdir -p "$TEST_PROJECT_DIR/client/frontend/.git"
+  create_package_json "$TEST_PROJECT_DIR/client/frontend"
+
+  mkdir -p "$TEST_PROJECT_DIR/infra/api/.git"
+  create_go_mod "$TEST_PROJECT_DIR/infra/api"
+
+  result=$(detect_tech_stack "$TEST_PROJECT_DIR")
+  [[ "$result" == *"node"* ]]
+  [[ "$result" == *"go"* ]]
+}
+
+@test "detect_tech_stack: workspace does not scan if root is git repo" {
+  # Root has .git — should NOT trigger workspace scanning
+  mkdir "$TEST_PROJECT_DIR/.git"
+  create_package_json "$TEST_PROJECT_DIR"
+
+  # Sub-repo with go — should NOT be picked up
+  mkdir -p "$TEST_PROJECT_DIR/services/api/.git"
+  create_go_mod "$TEST_PROJECT_DIR/services/api"
+
+  result=$(detect_tech_stack "$TEST_PROJECT_DIR")
+  [[ "$result" == *"node"* ]]
+  [[ "$result" != *"go"* ]]
+}
+
+@test "detect_tech_stack: workspace deduplicates stacks across repos" {
+  # Two repos both with go.mod
+  mkdir -p "$TEST_PROJECT_DIR/svc-a/.git"
+  create_go_mod "$TEST_PROJECT_DIR/svc-a"
+
+  mkdir -p "$TEST_PROJECT_DIR/svc-b/.git"
+  create_go_mod "$TEST_PROJECT_DIR/svc-b"
+
+  result=$(detect_tech_stack "$TEST_PROJECT_DIR")
+  [[ "$result" == *"go"* ]]
+  count=$(echo "$result" | tr ' ' '\n' | grep -c "^go$")
+  [ "$count" -eq 1 ]
+}
+
 @test "map_stack_to_languages: complex stack deduplicates" {
   result=$(map_stack_to_languages "go node react make")
   # Should contain golang and typescript, no duplicates
