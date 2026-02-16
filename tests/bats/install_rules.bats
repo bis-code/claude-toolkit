@@ -85,6 +85,32 @@ teardown() {
   assert_dir_exists "$TEST_PROJECT_DIR/.claude/rules/typescript"
 }
 
+@test "install_rules: read-only rule not installed by default" {
+  install_rules "$TEST_PROJECT_DIR" "golang" "$TOOLKIT_ROOT/templates"
+  [ ! -f "$TEST_PROJECT_DIR/.claude/rules/common/read-only.md" ]
+}
+
+@test "install_rules: read-only rule installed when READ_ONLY=true" {
+  install_rules "$TEST_PROJECT_DIR" "" "$TOOLKIT_ROOT/templates"
+  # Simulate install.sh conditional copy
+  READ_ONLY=true
+  if [ "$READ_ONLY" = true ]; then
+    _tracked_copy "$TOOLKIT_ROOT/templates/rules/conditional/read-only.md" \
+      "$TEST_PROJECT_DIR/.claude/rules/common/read-only.md" \
+      ".claude/rules/common/read-only.md"
+  fi
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/rules/common/read-only.md"
+}
+
+@test "install_rules: read-only rule contains expected sections" {
+  local rule="$TOOLKIT_ROOT/templates/rules/conditional/read-only.md"
+  assert_file_exists "$rule"
+  assert_file_contains "$rule" "Read-Only Mode"
+  assert_file_contains "$rule" "Restricted"
+  assert_file_contains "$rule" "Always Allowed"
+  assert_file_contains "$rule" "Override"
+}
+
 @test "install_rules: does not overwrite existing rules without force" {
   mkdir -p "$TEST_PROJECT_DIR/.claude/rules/common"
   echo "custom content" > "$TEST_PROJECT_DIR/.claude/rules/common/coding-style.md"

@@ -237,6 +237,43 @@ EOF
   [ "$pkg" = "null" ]
 }
 
+@test "update preserves readOnly from config" {
+  # Create config with readOnly: true
+  cat > "$TEST_PROJECT_DIR/.claude-toolkit.json" <<'EOF'
+{
+  "version": "1.0.0",
+  "readOnly": true,
+  "project": {
+    "name": "test-project",
+    "type": "repository",
+    "techStack": [],
+    "languages": [],
+    "packageManager": null
+  },
+  "commands": { "test": null, "lint": null },
+  "qa": { "scanCategories": [], "maxFixLines": 30 },
+  "mcpServers": { "required": ["deep-think"], "installed": ["deep-think"] }
+}
+EOF
+
+  # Simulate update mode detection: read readOnly from existing config
+  local config="$TEST_PROJECT_DIR/.claude-toolkit.json"
+  local read_only=false
+  if [ "$(jq -r '.readOnly // false' "$config")" = "true" ]; then
+    read_only=true
+  fi
+
+  # After update, readOnly should be preserved
+  update_toolkit_config "$config" "2.0.0" '[]' '[]' ""
+
+  local ro_value
+  ro_value=$(jq -r '.readOnly' "$config")
+  [ "$ro_value" = "true" ]
+
+  # The detection logic should have picked it up
+  [ "$read_only" = "true" ]
+}
+
 # ── Normal install does NOT overwrite without force ──
 
 @test "normal install does not overwrite existing agents" {
