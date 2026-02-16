@@ -1,74 +1,41 @@
 ---
 name: tdd-workflow
-description: "Complete TDD methodology. Use when writing new features, fixing bugs, or refactoring."
+description: "Enforce test-first discipline with red-green-refactor guidance and verification checkpoints."
 ---
 
-# TDD Workflow
+# /tdd-workflow
 
-Test-Driven Development is mandatory for all production code changes.
+Spawns the `tdd-guide` agent to enforce TDD discipline throughout an implementation task, including verification checkpoints at each step.
 
-## When to Use
+## Steps
 
-- Writing a new feature or endpoint
-- Fixing a bug (write the regression test first)
-- Refactoring existing code (tests must exist before and after)
+1. **Gather context** — understand what needs TDD guidance:
+   - If arguments are provided (feature description, bug to fix, files to refactor), use those
+   - Otherwise, ask the user what they are implementing
+   - Detect the test framework and test command from `.claude-toolkit.json` or auto-detection
+   - Identify existing test files related to the scope
 
-## Red-Green-Refactor Cycle
+2. **Spawn the agent** — use the Task tool:
+   ```
+   Task tool with subagent_type="tdd-guide"
+   ```
+   Pass in the prompt:
+   - The task description (feature, bug fix, or refactor)
+   - The test command and framework
+   - Existing test file paths for the affected modules
+   - Any relevant source files for context
 
-### 1. Red: Write a Failing Test
+3. **Present guidance** — relay the agent's TDD plan:
+   - Ordered list of test cases to write (red phase)
+   - Minimum implementation for each test (green phase)
+   - Refactoring suggestions after tests are green
+   - Verification checkpoints between each cycle:
+     - Type check / compile passes
+     - Lint passes
+     - All tests pass (no regressions)
+     - Runtime verification (app starts, endpoints respond)
 
-- Write the **smallest possible test** that describes the desired behavior
-- Run it and confirm it **fails for the right reason** (not a syntax error)
-- The test name should read like a specification: `should reject expired tokens`
-
-### 2. Green: Make It Pass
-
-- Write the **minimum code** to make the test pass
-- Do not generalize, optimize, or clean up yet
-- Resist the urge to write more code than the test demands
-
-### 3. Refactor: Clean Up
-
-- Improve structure, naming, and duplication -- without changing behavior
-- Run tests after every refactor step to confirm nothing broke
-
-## Test-First Checklist
-
-- [ ] Test file exists or is created
-- [ ] Test describes **behavior**, not implementation details
-- [ ] Test covers the **happy path**
-- [ ] Test covers at least one **unhappy path** (invalid input, error state)
-- [ ] Test runs and **fails** before implementation begins
-- [ ] Test is **deterministic** (no flaky dependencies on time, network, randomness)
-
-## Common Pitfalls
-
-| Pitfall | Fix |
-|---------|-----|
-| Writing tests after code | Stop. Delete the code. Write the test first. |
-| Testing implementation details | Test inputs and outputs, not internal methods |
-| Tests that depend on order | Each test must set up its own state |
-| Overly broad tests | One assertion per behavior; split large tests |
-| Mocking everything | Mock boundaries (DB, HTTP), not internal logic |
-| Skipping the refactor step | Green is not done -- refactored green is done. |
-
-## Bug Fix Flow
-
-1. Reproduce the bug with a failing test
-2. Confirm the test fails on the current code
-3. Fix the code (minimum change)
-4. Confirm the test passes and no other tests broke
-
-## New Feature Flow
-
-1. Write test for the simplest case, implement just enough to pass
-2. Write test for the next case (edge case, error, boundary), implement
-3. Refactor once all cases are covered
-4. Run full test suite before committing
-
-## Test Quality Signals
-
-- Tests run in **under 5 seconds** (unit) or **under 30 seconds** (integration)
-- Test names form a **readable specification** of the module
-- Deleting any line of production code causes **at least one test to fail**
-- Tests can run in **any order** and still pass
+4. **Offer follow-up actions**:
+   - "Start first test?" — write the first failing test
+   - "Verify checkpoint?" — run the full verification loop
+   - "Review coverage?" — check what is tested and what is missing
