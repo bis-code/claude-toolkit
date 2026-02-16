@@ -39,6 +39,19 @@ _find_subproject_dirs() {
     done
     return
   fi
+
+  # Workspace mode: discover git repos as sub-projects
+  # Only when no monorepo tool matched and dir is not itself a git repo
+  if [ ! -d "$dir/.git" ]; then
+    _find_workspace_repos "$dir"
+  fi
+}
+
+_find_workspace_repos() {
+  local dir="$1"
+  find "$dir" -maxdepth 4 -name ".git" -type d 2>/dev/null | while read -r gitdir; do
+    echo "${gitdir%/.git}"
+  done
 }
 
 _detect_tech_stack_in_dir() {
