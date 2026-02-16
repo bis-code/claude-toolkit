@@ -226,35 +226,6 @@ The toolkit auto-detects your tech stack and suggests appropriate settings:
 
 Makefile targets are preferred over raw commands when available.
 
-## Multiple Claude Accounts
-
-If you use different Claude accounts for different directories (e.g., personal vs work), use the `CLAUDE_CONFIG_DIR` environment variable with a shell function:
-
-```bash
-# Add to ~/.zshrc (same pattern as gh CLI account switching)
-claude() {
-  if [[ "$PWD" == "$HOME/work"* ]]; then
-    CLAUDE_CONFIG_DIR="$HOME/.claude-work" command claude "$@"
-  else
-    command claude "$@"
-  fi
-}
-```
-
-Then authenticate each account:
-```bash
-# Personal (default ~/.claude)
-claude login
-
-# Work
-CLAUDE_CONFIG_DIR=~/.claude-work claude login
-```
-
-Global commands need to be installed in both config dirs:
-```bash
-cp -r ~/.claude/commands ~/.claude-work/commands
-```
-
 ## Prerequisites
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated
