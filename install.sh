@@ -52,6 +52,7 @@ SKIP_SKILLS=false
 SKIP_HOOKS=false
 SKIP_AGENTS=false
 DRY_RUN=false
+READ_ONLY=false
 PROJECT_DIR=""
 
 while [[ $# -gt 0 ]]; do
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     --skip-hooks)  SKIP_HOOKS=true; shift ;;
     --skip-agents) SKIP_AGENTS=true; shift ;;
     --dry-run)     DRY_RUN=true; shift ;;
+    --read-only)   READ_ONLY=true; shift ;;
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
     -h|--help)
       echo "Claude Code Toolkit Installer v$TOOLKIT_VERSION"
@@ -84,6 +86,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --skip-skills      Skip skills installation"
       echo "  --skip-hooks       Skip hooks installation"
       echo "  --skip-agents      Skip agents installation"
+      echo "  --read-only        Install read-only rule (Claude won't modify files unless asked)"
       echo "  --dry-run          Show what would be installed without doing it"
       echo "  --project-dir DIR  Target directory (default: current or git root)"
       echo "  -h, --help         Show this help"
@@ -94,7 +97,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Export for use in lib/ modules
-export FORCE MODE
+export FORCE MODE READ_ONLY
 
 # ─────────────────────────────────────────────
 # Step 1: Prerequisites
@@ -177,6 +180,12 @@ fi
 if [ -f "$PROJECT_DIR/.claude-toolkit.json" ]; then
   if [ "$MODE" = "install" ] && [ "$FORCE" = false ]; then
     warn ".claude-toolkit.json already exists (use --update to refresh)"
+  fi
+  # Restore readOnly flag from existing config on update
+  if [ "$MODE" = "update" ] && [ "$READ_ONLY" = false ]; then
+    if [ "$(jq -r '.readOnly // false' "$PROJECT_DIR/.claude-toolkit.json")" = "true" ]; then
+      READ_ONLY=true
+    fi
   fi
 fi
 
@@ -302,6 +311,7 @@ if [ "$DRY_RUN" = true ]; then
   info "Test command: ${TEST_CMD:-none}"
   info "Lint command: ${LINT_CMD:-none}"
   echo ""
+  [ "$READ_ONLY" = true ] && info "Read-only mode: enabled"
   info "Components to install:"
   [ "$SKIP_RULES" = false ]  && info "  Rules: common ${DETECTED_LANGUAGES}" || warn "  Rules: SKIPPED"
   [ "$SKIP_SKILLS" = false ] && info "  Skills: 5 progressive disclosure skills" || warn "  Skills: SKIPPED"
@@ -351,6 +361,14 @@ elif [ "$SKIP_RULES" = false ]; then
   info ".claude/rules/ — common only (no languages detected)"
 else
   warn "Rules: skipped"
+fi
+
+# Read-only rule (conditional — only when --read-only flag or config says so)
+if [ "$READ_ONLY" = true ] && [ "$SKIP_RULES" = false ]; then
+  _tracked_copy "$TEMPLATES/rules/conditional/read-only.md" \
+    "$PROJECT_DIR/.claude/rules/common/read-only.md" \
+    ".claude/rules/common/read-only.md"
+  info ".claude/rules/common/read-only.md — read-only mode enabled"
 fi
 
 # Skills
@@ -424,6 +442,8 @@ if [ "$MODE" = "update" ] && [ -f "$TOOLKIT_CONFIG" ]; then
   STACK_JSON=$(to_json_array "$TECH_STACK")
   LANG_JSON=$(to_json_array "$DETECTED_LANGUAGES")
   update_toolkit_config "$TOOLKIT_CONFIG" "$TOOLKIT_VERSION" "$STACK_JSON" "$LANG_JSON" "$PKG_MANAGER"
+  # Persist readOnly flag
+  jq --argjson ro "$READ_ONLY" '.readOnly = $ro' "$TOOLKIT_CONFIG" > "$TOOLKIT_CONFIG.tmp" && mv "$TOOLKIT_CONFIG.tmp" "$TOOLKIT_CONFIG"
   info ".claude-toolkit.json — version and stack updated (user config preserved)"
 elif [ ! -f "$TOOLKIT_CONFIG" ] || [ "$FORCE" = true ]; then
   SCAN_JSON=$(to_json_array "$SCAN_CATS")
@@ -440,6 +460,7 @@ elif [ ! -f "$TOOLKIT_CONFIG" ] || [ "$FORCE" = true ]; then
   cat > "$TOOLKIT_CONFIG" <<EOFCONFIG
 {
   "version": "$TOOLKIT_VERSION",
+  "readOnly": $READ_ONLY,
   "project": {
     "name": "$PROJECT_NAME",
     "type": "$PROJECT_TYPE",
@@ -508,6 +529,7 @@ echo "  Installed:"
 [ "$SKIP_AGENTS" = false ] && echo "    Agents:   ${TOTAL_AGENT_COUNT:-0} (${GENERIC_COUNT:-0} generic + ${DOMAIN_AGENT_COUNT:-0} domain)"
 echo "    Commands: $(ls "$TOOLKIT_DIR/commands/"*.md 2>/dev/null | wc -l | tr -d ' ') slash commands"
 echo "    MCP:      $INSTALLED_MCPS"
+[ "$READ_ONLY" = true ] && echo "    Mode:     read-only"
 echo ""
 echo "  Next steps:"
 echo "    1. Start Claude Code in this project"

@@ -25,6 +25,7 @@ parse_args() {
   SKIP_HOOKS=false
   SKIP_AGENTS=false
   DRY_RUN=false
+  READ_ONLY=false
   PROJECT_DIR=""
 
   while [[ $# -gt 0 ]]; do
@@ -39,6 +40,7 @@ parse_args() {
       --skip-hooks) SKIP_HOOKS=true; shift ;;
       --skip-agents) SKIP_AGENTS=true; shift ;;
       --dry-run) DRY_RUN=true; shift ;;
+      --read-only) READ_ONLY=true; shift ;;
       --project-dir) PROJECT_DIR="$2"; shift 2 ;;
       -h|--help) echo "help"; return 0 ;;
       *) echo "Unknown option: $1"; return 1 ;;
@@ -118,6 +120,23 @@ parse_args() {
   [ "$LANGUAGES" = "go,typescript" ]
   [ "$SKIP_HOOKS" = "true" ]
   [ "$DRY_RUN" = "true" ]
+}
+
+@test "parse_args: --read-only flag" {
+  parse_args --read-only
+  [ "$READ_ONLY" = "true" ]
+}
+
+@test "parse_args: defaults READ_ONLY to false" {
+  parse_args
+  [ "$READ_ONLY" = "false" ]
+}
+
+@test "parse_args: --read-only combined with other flags" {
+  parse_args --auto --read-only --force
+  [ "$READ_ONLY" = "true" ]
+  [ "$AUTO_MODE" = "true" ]
+  [ "$FORCE" = "true" ]
 }
 
 @test "parse_args: unknown option returns error" {
