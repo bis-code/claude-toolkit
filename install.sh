@@ -122,6 +122,75 @@ if [ "$PREREQS_OK" = false ]; then
 fi
 
 # ─────────────────────────────────────────────
+# Uninstall: remove all toolkit files and exit
+# ─────────────────────────────────────────────
+
+if [ "$MODE" = "uninstall" ]; then
+  if [ -n "$PROJECT_DIR" ]; then
+    PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
+  elif git rev-parse --show-toplevel &>/dev/null; then
+    PROJECT_DIR="$(git rev-parse --show-toplevel)"
+  else
+    PROJECT_DIR="$(pwd)"
+  fi
+
+  header "2" "Uninstalling from: $PROJECT_DIR"
+
+  TOOLKIT_CONFIG="$PROJECT_DIR/.claude-toolkit.json"
+
+  if [ -f "$TOOLKIT_CONFIG" ]; then
+    # Remove managed files listed in config
+    REMOVED=0
+    while IFS= read -r rel_path; do
+      [ -z "$rel_path" ] && continue
+      if [ -f "$PROJECT_DIR/$rel_path" ]; then
+        rm "$PROJECT_DIR/$rel_path"
+        REMOVED=$((REMOVED + 1))
+      fi
+    done < <(jq -r '.managedFiles // [] | .[]' "$TOOLKIT_CONFIG" 2>/dev/null)
+    info "Removed $REMOVED managed files"
+  fi
+
+  # Remove toolkit-generated config files
+  for f in .claude-toolkit.json .deep-think.json .mcp.json; do
+    if [ -f "$PROJECT_DIR/$f" ]; then
+      rm "$PROJECT_DIR/$f"
+      info "Removed $f"
+    fi
+  done
+
+  # Remove hooks.json (installed via merge, not tracked in managedFiles)
+  if [ -f "$PROJECT_DIR/.claude/hooks/hooks.json" ]; then
+    rm "$PROJECT_DIR/.claude/hooks/hooks.json"
+    info "Removed .claude/hooks/hooks.json"
+  fi
+
+  # Remove tools/ralph/ if it only contains toolkit files
+  if [ -d "$PROJECT_DIR/tools/ralph" ]; then
+    rm -f "$PROJECT_DIR/tools/ralph/prd.json.example"
+    rmdir "$PROJECT_DIR/tools/ralph" 2>/dev/null && rmdir "$PROJECT_DIR/tools" 2>/dev/null || true
+    info "Removed tools/ralph/"
+  fi
+
+  # Clean up empty directories under .claude/
+  if [ -d "$PROJECT_DIR/.claude" ]; then
+    find "$PROJECT_DIR/.claude" -type d -empty -delete 2>/dev/null
+    # Remove .claude/ itself if empty
+    rmdir "$PROJECT_DIR/.claude" 2>/dev/null || true
+    if [ -d "$PROJECT_DIR/.claude" ]; then
+      warn ".claude/ still has user files (preserved)"
+    else
+      info "Removed .claude/"
+    fi
+  fi
+
+  echo ""
+  echo -e "${GREEN}${BOLD}Done!${NC} Toolkit uninstalled from $(basename "$PROJECT_DIR")."
+  echo ""
+  exit 0
+fi
+
+# ─────────────────────────────────────────────
 # Step 2: Detect project
 # ─────────────────────────────────────────────
 
@@ -277,7 +346,9 @@ else
       read -r -p "    Test command: $TEST_CMD  [Y/n/edit]: " ans
       case "$ans" in
         n|N) TEST_CMD="" ;;
-        "") ;;
+        ""|y|Y) ;;
+        edit|Edit|EDIT)
+          read -r -p "    Enter test command: " TEST_CMD ;;
         *) TEST_CMD="$ans" ;;
       esac
     fi
@@ -286,7 +357,9 @@ else
       read -r -p "    Lint command: $LINT_CMD  [Y/n/edit]: " ans
       case "$ans" in
         n|N) LINT_CMD="" ;;
-        "") ;;
+        ""|y|Y) ;;
+        edit|Edit|EDIT)
+          read -r -p "    Enter lint command: " LINT_CMD ;;
         *) LINT_CMD="$ans" ;;
       esac
     fi
@@ -537,6 +610,6 @@ echo "    2. Run /ralph --issues 1,2 to build features from GitHub issues"
 echo "    3. Run /qa to scan and fix quality issues"
 echo "    4. Run /verify to check test + lint status"
 echo ""
-echo "  Update toolkit:  ~/.claude/toolkit/install.sh --update"
-echo "  Toolkit repo:    $TOOLKIT_DIR"
+echo "  Update toolkit:  $TOOLKIT_DIR/install.sh --update"
+echo "  Uninstall:       $TOOLKIT_DIR/install.sh --uninstall"
 echo ""
