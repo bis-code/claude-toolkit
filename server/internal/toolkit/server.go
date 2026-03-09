@@ -201,6 +201,7 @@ func (h *handlers) registerTools(s *server.MCPServer) {
 	h.registerTelemetryTools(s)
 	h.registerPatrolTools(s)
 	h.registerEvolutionTools(s)
+	h.registerWorkspaceTools(s)
 }
 
 func (h *handlers) handleHealthCheck(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {

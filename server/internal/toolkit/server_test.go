@@ -2,6 +2,7 @@ package toolkit_test
 
 import (
 	"fmt"
+	"os"
 	"time"
 	"context"
 	"encoding/json"
@@ -1106,5 +1107,186 @@ func TestIntegration_RejectImprovement(t *testing.T) {
 	}
 	if rejected[0].Reason != "too vague to be actionable" {
 		t.Errorf("reason = %q, want 'too vague to be actionable'", rejected[0].Reason)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Workspace tool tests (US-017)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesWorkspaceTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	workspaceTools := []string{
+		"toolkit__get_workspace",
+		"toolkit__register_project",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range workspaceTools {
+		if !toolNames[expected] {
+			t.Errorf("expected workspace tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_GetWorkspace_AutoDetect(t *testing.T) {
+	c, _ := setupClient(t)
+
+	// Create a temp workspace with two git repos.
+	dir := t.TempDir()
+	makeIntegrationRepo(t, dir, "api", "go.mod")
+	makeIntegrationRepo(t, dir, "web", "package.json", "tsconfig.json")
+
+	result := callTool(t, c, "toolkit__get_workspace", map[string]interface{}{
+		"directory": dir,
+	})
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &cfg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	repos, ok := cfg["repos"].([]interface{})
+	if !ok {
+		t.Fatal("repos should be an array")
+	}
+	if len(repos) != 2 {
+		t.Errorf("expected 2 repos, got %d", len(repos))
+	}
+
+	typesByPath := make(map[string]string)
+	for _, r := range repos {
+		repo := r.(map[string]interface{})
+		typesByPath[repo["path"].(string)] = repo["type"].(string)
+	}
+
+	if typesByPath["api"] != "go" {
+		t.Errorf("api type = %q, want %q", typesByPath["api"], "go")
+	}
+	if typesByPath["web"] != "typescript" {
+		t.Errorf("web type = %q, want %q", typesByPath["web"], "typescript")
+	}
+}
+
+func TestIntegration_GetWorkspace_ReturnsErrorForMissingDir(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__get_workspace",
+			Arguments: map[string]interface{}{
+				"directory": "/nonexistent-workspace-dir-abc123",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for nonexistent directory")
+	}
+}
+
+func TestIntegration_RegisterProject(t *testing.T) {
+	c, _ := setupClient(t)
+
+	dir := t.TempDir()
+	makeIntegrationRepo(t, dir, "existing-svc", "go.mod")
+
+	// Register a new project (not auto-detected — no .git).
+	result := callTool(t, c, "toolkit__register_project", map[string]interface{}{
+		"directory": dir,
+		"path":      "new-service",
+		"type":      "rust",
+		"branch":    "main",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "project registered" {
+		t.Errorf("message = %v, want 'project registered'", resp["message"])
+	}
+
+	// Verify the config file was written.
+	getResult := callTool(t, c, "toolkit__get_workspace", map[string]interface{}{
+		"directory": dir,
+	})
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(getResult), &cfg); err != nil {
+		t.Fatalf("invalid JSON from get_workspace: %v", err)
+	}
+
+	repos := cfg["repos"].([]interface{})
+	foundNew := false
+	for _, r := range repos {
+		repo := r.(map[string]interface{})
+		if repo["path"] == "new-service" && repo["type"] == "rust" {
+			foundNew = true
+		}
+	}
+	if !foundNew {
+		t.Error("newly registered project 'new-service' not found in workspace config")
+	}
+}
+
+func TestIntegration_RegisterProject_DuplicateReturnsError(t *testing.T) {
+	c, _ := setupClient(t)
+
+	dir := t.TempDir()
+	makeIntegrationRepo(t, dir, "svc", "go.mod")
+
+	// First registration succeeds.
+	callTool(t, c, "toolkit__register_project", map[string]interface{}{
+		"directory": dir,
+		"path":      "svc",
+		"type":      "go",
+	})
+
+	// Second registration with same path returns an error.
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__register_project",
+			Arguments: map[string]interface{}{
+				"directory": dir,
+				"path":      "svc",
+				"type":      "go",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for duplicate project registration")
+	}
+}
+
+// makeIntegrationRepo creates a test repo for toolkit integration tests.
+func makeIntegrationRepo(t *testing.T, dir, name string, markers ...string) {
+	t.Helper()
+	repoDir := fmt.Sprintf("%s/%s", dir, name)
+	if err := os.MkdirAll(fmt.Sprintf("%s/.git", repoDir), 0o755); err != nil {
+		t.Fatalf("makeIntegrationRepo MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(fmt.Sprintf("%s/.git/HEAD", repoDir), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatalf("makeIntegrationRepo write HEAD: %v", err)
+	}
+	for _, m := range markers {
+		if err := os.WriteFile(fmt.Sprintf("%s/%s", repoDir, m), []byte(""), 0o644); err != nil {
+			t.Fatalf("makeIntegrationRepo write marker %s: %v", m, err)
+		}
 	}
 }
