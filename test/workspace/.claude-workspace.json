@@ -1,0 +1,16 @@
+{
+  "name": "test-workspace",
+  "repos": [
+    {"path": "api-go", "branch": "main", "type": "go"},
+    {"path": "ml-python", "branch": "main", "type": "python"},
+    {"path": "bff-ts", "branch": "main", "type": "typescript"},
+    {"path": "worker-rust", "branch": "main", "type": "rust"}
+  ],
+  "shared": ["shared/"],
+  "planning_repo": "",
+  "cross_repo_rules": [
+    "Protobuf changes in shared/ must update all repos"
+  ],
+  "dependency_order": ["api-go", "worker-rust", "bff-ts", "ml-python"],
+  "domain_labels": ["backend", "ml", "frontend", "worker"]
+}

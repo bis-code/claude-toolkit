@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package items.v1;
+
+option go_package = "github.com/bis-code/claude-toolkit/shared/items/v1";
+
+message Item {
+  uint32 id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message ListItemsRequest {}
+
+message ListItemsResponse {
+  repeated Item items = 1;
+}
+
+service ItemService {
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse);
+}
