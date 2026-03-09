@@ -1,0 +1,17 @@
+{
+  "name": "turborepo-monorepo",
+  "repos": [
+    {
+      "path": ".",
+      "type": "typescript",
+      "monorepo_type": "turborepo",
+      "sub_projects": [
+        {"path": "apps/web", "type": "typescript", "test_command": "npm test"},
+        {"path": "apps/api", "type": "typescript", "test_command": "npm test"},
+        {"path": "packages/ui", "type": "typescript", "test_command": "npm test"},
+        {"path": "packages/contracts", "type": "typescript", "test_command": "npm test"},
+        {"path": "packages/config", "type": "typescript"}
+      ]
+    }
+  ]
+}
