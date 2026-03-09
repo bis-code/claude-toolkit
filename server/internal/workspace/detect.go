@@ -7,16 +7,34 @@ import (
 )
 
 // Detect scans a directory for git repositories and identifies their tech stacks.
-// It returns a workspace Config based on what it finds.
+// If the directory itself is a git repo, it detects it as a single-repo workspace
+// (with potential monorepo sub-projects). Otherwise, it scans child directories
+// for git repos (multi-repo workspace mode).
 func Detect(parentDir string) (*Config, error) {
-	entries, err := os.ReadDir(parentDir)
-	if err != nil {
-		return nil, err
-	}
-
 	cfg := &Config{
 		Name:  filepath.Base(parentDir),
 		Repos: []Repo{},
+	}
+
+	// Check if parentDir itself is a git repo.
+	if fileExists(filepath.Join(parentDir, ".git")) {
+		repo := Repo{
+			Path:   ".",
+			Type:   detectTechStack(parentDir),
+			Branch: detectBranch(parentDir),
+		}
+		monorepoType, subProjects := DetectMonorepo(parentDir)
+		if monorepoType != "" {
+			repo.MonorepoType = monorepoType
+			repo.SubProjects = subProjects
+		}
+		cfg.Repos = append(cfg.Repos, repo)
+		return cfg, nil
+	}
+
+	entries, err := os.ReadDir(parentDir)
+	if err != nil {
+		return nil, err
 	}
 
 	for _, entry := range entries {

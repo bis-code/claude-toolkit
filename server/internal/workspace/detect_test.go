@@ -708,3 +708,60 @@ func TestDetect_MonorepoInWorkspace(t *testing.T) {
 		t.Errorf("expected 2 sub-projects, got %d", len(repo.SubProjects))
 	}
 }
+
+func TestDetect_SingleRepoWithMonorepo(t *testing.T) {
+	// When Detect is called on a directory that IS a git repo (has .git at root),
+	// it should detect it as a single-repo workspace with monorepo sub-projects.
+	dir := t.TempDir()
+
+	// Make dir itself a git repo with turbo.json (Turborepo monorepo).
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{"pipeline":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"mono"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create apps/web and apps/api.
+	for _, app := range []string{"apps/web", "apps/api"} {
+		appDir := filepath.Join(dir, app)
+		if err := os.MkdirAll(appDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(appDir, "package.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(appDir, "tsconfig.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg, err := workspace.Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+
+	if len(cfg.Repos) != 1 {
+		t.Fatalf("expected 1 repo (self), got %d", len(cfg.Repos))
+	}
+
+	repo := cfg.Repos[0]
+	if repo.Path != "." {
+		t.Errorf("expected path '.', got %q", repo.Path)
+	}
+	if repo.MonorepoType != "turborepo" {
+		t.Errorf("expected MonorepoType 'turborepo', got %q", repo.MonorepoType)
+	}
+	if len(repo.SubProjects) < 2 {
+		t.Errorf("expected at least 2 sub-projects, got %d", len(repo.SubProjects))
+	}
+	if repo.Branch != "main" {
+		t.Errorf("expected branch 'main', got %q", repo.Branch)
+	}
+}
