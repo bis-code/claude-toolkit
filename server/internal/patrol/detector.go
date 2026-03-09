@@ -51,6 +51,11 @@ func (d *Detector) SetThresholds(t Thresholds) {
 	d.thresholds = t
 }
 
+// Thresholds returns a copy of the current detection thresholds.
+func (d *Detector) Thresholds() Thresholds {
+	return d.thresholds
+}
+
 // Analyze checks a list of events for anti-patterns and returns any detected alerts.
 func (d *Detector) Analyze(events []*db.Event) []Alert {
 	if len(events) == 0 {

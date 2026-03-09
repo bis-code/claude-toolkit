@@ -730,3 +730,206 @@ func TestIntegration_GetProjectStats(t *testing.T) {
 func nowTime() time.Time {
 	return time.Now().UTC().Truncate(time.Second)
 }
+
+// ---------------------------------------------------------------------------
+// Patrol tool tests (US-014)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesPatrolTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	patrolTools := []string{
+		"toolkit__patrol_check",
+		"toolkit__configure_patrol",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range patrolTools {
+		if !toolNames[expected] {
+			t.Errorf("expected patrol tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_PatrolCheck_Healthy(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create a session with a few successful events — no anti-patterns.
+	store.CreateSession(&db.Session{ID: "sess-patrol-healthy", Project: "p", StartedAt: nowTime()})
+	store.CreateEvent(&db.Event{
+		ID: "ep-1", SessionID: "sess-patrol-healthy", Type: "tool_call",
+		Result: "success", Details: "Read file.go", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "ep-2", SessionID: "sess-patrol-healthy", Type: "tool_call",
+		Result: "success", Details: "Write file.go", Timestamp: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__patrol_check", map[string]interface{}{
+		"session_id": "sess-patrol-healthy",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["status"] != "healthy" {
+		t.Errorf("status = %v, want 'healthy'", resp["status"])
+	}
+}
+
+func TestIntegration_PatrolCheck_RetryLoop(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create session + 3 consecutive same-command failures → retry_loop alert.
+	store.CreateSession(&db.Session{ID: "sess-patrol-retry", Project: "p", StartedAt: nowTime()})
+	for i := 0; i < 3; i++ {
+		store.CreateEvent(&db.Event{
+			ID:        fmt.Sprintf("ep-retry-%d", i),
+			SessionID: "sess-patrol-retry",
+			Type:      "tool_call",
+			Result:    "failure",
+			Details:   "go build ./...",
+			Timestamp: nowTime(),
+		})
+	}
+
+	result := callTool(t, c, "toolkit__patrol_check", map[string]interface{}{
+		"session_id": "sess-patrol-retry",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if resp["status"] == "healthy" {
+		t.Fatal("expected non-healthy status, got 'healthy'")
+	}
+
+	alerts, ok := resp["alerts"].([]interface{})
+	if !ok || len(alerts) == 0 {
+		t.Fatal("expected at least one alert")
+	}
+
+	found := false
+	for _, a := range alerts {
+		alert := a.(map[string]interface{})
+		if alert["pattern"] == "retry_loop" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected alert with pattern 'retry_loop'")
+	}
+}
+
+func TestIntegration_PatrolCheck_Rework(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create session + 3 stuck/blocked events → rework alert with severity critical.
+	store.CreateSession(&db.Session{ID: "sess-patrol-rework", Project: "p", StartedAt: nowTime()})
+	store.CreateEvent(&db.Event{
+		ID: "ep-stuck-1", SessionID: "sess-patrol-rework", Type: "stuck",
+		Result: "stuck", Details: "cannot resolve import", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "ep-stuck-2", SessionID: "sess-patrol-rework", Type: "blocked",
+		Result: "blocked", Details: "build fails", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "ep-stuck-3", SessionID: "sess-patrol-rework", Type: "stuck",
+		Result: "stuck", Details: "circular dependency", Timestamp: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__patrol_check", map[string]interface{}{
+		"session_id": "sess-patrol-rework",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if resp["status"] != "critical" {
+		t.Errorf("status = %v, want 'critical'", resp["status"])
+	}
+
+	alerts, ok := resp["alerts"].([]interface{})
+	if !ok || len(alerts) == 0 {
+		t.Fatal("expected at least one alert")
+	}
+
+	found := false
+	for _, a := range alerts {
+		alert := a.(map[string]interface{})
+		if alert["pattern"] == "rework" && alert["severity"] == "critical" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected critical rework alert")
+	}
+}
+
+func TestIntegration_ConfigurePatrol(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Lower retry_loop_count threshold to 1 so a single failure triggers the alert.
+	configResult := callTool(t, c, "toolkit__configure_patrol", map[string]interface{}{
+		"retry_loop_count": float64(1),
+	})
+
+	var configResp map[string]interface{}
+	if err := json.Unmarshal([]byte(configResult), &configResp); err != nil {
+		t.Fatalf("invalid JSON from configure_patrol: %v", err)
+	}
+	if configResp["message"] != "patrol thresholds updated" {
+		t.Errorf("message = %v, want 'patrol thresholds updated'", configResp["message"])
+	}
+
+	// Create a session with just 1 failure — should trigger retry_loop with the new threshold.
+	store.CreateSession(&db.Session{ID: "sess-patrol-config", Project: "p", StartedAt: nowTime()})
+	store.CreateEvent(&db.Event{
+		ID: "ep-config-1", SessionID: "sess-patrol-config", Type: "tool_call",
+		Result: "failure", Details: "go build ./...", Timestamp: nowTime(),
+	})
+
+	checkResult := callTool(t, c, "toolkit__patrol_check", map[string]interface{}{
+		"session_id": "sess-patrol-config",
+	})
+
+	var checkResp map[string]interface{}
+	if err := json.Unmarshal([]byte(checkResult), &checkResp); err != nil {
+		t.Fatalf("invalid JSON from patrol_check: %v", err)
+	}
+
+	if checkResp["status"] == "healthy" {
+		t.Error("expected non-healthy status after lowering retry_loop_count to 1")
+	}
+
+	alerts, ok := checkResp["alerts"].([]interface{})
+	if !ok || len(alerts) == 0 {
+		t.Fatal("expected at least one alert after threshold change")
+	}
+
+	found := false
+	for _, a := range alerts {
+		alert := a.(map[string]interface{})
+		if alert["pattern"] == "retry_loop" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected retry_loop alert after lowering threshold to 1")
+	}
+}

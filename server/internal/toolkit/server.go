@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bis-code/claude-toolkit/server/internal/db"
+	"github.com/bis-code/claude-toolkit/server/internal/patrol"
 	"github.com/bis-code/claude-toolkit/server/internal/rules"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -20,8 +21,9 @@ const (
 
 // handlers holds the dependencies for MCP tool handlers.
 type handlers struct {
-	store  *db.Store
-	engine *rules.Engine
+	store    *db.Store
+	engine   *rules.Engine
+	detector *patrol.Detector
 }
 
 // NewServer creates a new MCP server with all toolkit tools registered.
@@ -44,8 +46,9 @@ func NewServer(opts ...Option) *server.MCPServer {
 	}
 
 	h := &handlers{
-		store:  store,
-		engine: rules.NewEngine(store),
+		store:    store,
+		engine:   rules.NewEngine(store),
+		detector: patrol.NewDetector(patrol.DefaultThresholds()),
 	}
 
 	s := server.NewMCPServer(
@@ -193,6 +196,7 @@ func (h *handlers) registerTools(s *server.MCPServer) {
 		h.handleScoreRule,
 	)
 	h.registerTelemetryTools(s)
+	h.registerPatrolTools(s)
 }
 
 func (h *handlers) handleHealthCheck(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
