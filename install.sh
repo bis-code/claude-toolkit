@@ -53,6 +53,7 @@ SKIP_HOOKS=false
 SKIP_AGENTS=false
 DRY_RUN=false
 READ_ONLY=false
+WORKSPACE_MODE=false
 PROJECT_DIR=""
 
 while [[ $# -gt 0 ]]; do
@@ -68,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --skip-agents) SKIP_AGENTS=true; shift ;;
     --dry-run)     DRY_RUN=true; shift ;;
     --read-only)   READ_ONLY=true; shift ;;
+    --workspace)   WORKSPACE_MODE=true; shift ;;
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
     -h|--help)
       echo "Claude Code Toolkit Installer v$TOOLKIT_VERSION"
@@ -87,6 +89,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --skip-hooks       Skip hooks installation"
       echo "  --skip-agents      Skip agents installation"
       echo "  --read-only        Install read-only rule (Claude won't modify files unless asked)"
+      echo "  --workspace        Generate .claude-workspace.json from auto-detection"
       echo "  --dry-run          Show what would be installed without doing it"
       echo "  --project-dir DIR  Target directory (default: current or git root)"
       echo "  -h, --help         Show this help"
@@ -679,6 +682,86 @@ if [ "$IS_GIT_REPO" = true ] && [ -f "$TEMPLATES/gitignore-entries.txt" ]; then
   info ".gitignore — runtime entries added"
 elif [ "$IS_GIT_REPO" = false ]; then
   info ".gitignore — skipped (not a git repo)"
+fi
+
+# ─────────────────────────────────────────────
+# Step 5b: Workspace mode — generate .claude-workspace.json
+# ─────────────────────────────────────────────
+
+if [ "$WORKSPACE_MODE" = true ]; then
+  header "5b" "Workspace configuration"
+
+  WORKSPACE_CONFIG="$PROJECT_DIR/.claude-workspace.json"
+
+  if [ -f "$WORKSPACE_CONFIG" ] && [ "$FORCE" = false ]; then
+    warn ".claude-workspace.json already exists (use --force to regenerate)"
+  else
+    # Auto-detect repos in the directory
+    WORKSPACE_NAME="$(basename "$PROJECT_DIR")"
+    REPOS_JSON="["
+    SHARED_JSON="["
+    FIRST_REPO=true
+    FIRST_SHARED=true
+
+    for dir in "$PROJECT_DIR"/*/; do
+      [ ! -d "$dir" ] && continue
+      dir_name="$(basename "$dir")"
+
+      if [ -d "$dir/.git" ]; then
+        # It's a git repo — detect tech stack
+        repo_type=""
+        [ -f "$dir/go.mod" ] && repo_type="go"
+        [ -f "$dir/Cargo.toml" ] && repo_type="rust"
+        [ -f "$dir/pyproject.toml" ] || [ -f "$dir/requirements.txt" ] && repo_type="python"
+        [ -f "$dir/tsconfig.json" ] && repo_type="typescript"
+        [ -f "$dir/package.json" ] && [ -z "$repo_type" ] && repo_type="typescript"
+
+        # Detect branch
+        repo_branch="main"
+        if [ -f "$dir/.git/HEAD" ]; then
+          head_content=$(cat "$dir/.git/HEAD")
+          case "$head_content" in
+            ref:*) repo_branch="${head_content#ref: refs/heads/}" ;;
+          esac
+        fi
+
+        [ "$FIRST_REPO" = false ] && REPOS_JSON+=","
+        REPOS_JSON+="{\"path\":\"$dir_name\",\"branch\":\"$repo_branch\""
+        [ -n "$repo_type" ] && REPOS_JSON+=",\"type\":\"$repo_type\""
+        REPOS_JSON+="}"
+        FIRST_REPO=false
+        info "Repo: $dir_name ($repo_type, branch: $repo_branch)"
+      else
+        # Not a git repo — shared directory
+        [ "$FIRST_SHARED" = false ] && SHARED_JSON+=","
+        SHARED_JSON+="\"$dir_name/\""
+        FIRST_SHARED=false
+      fi
+    done
+
+    REPOS_JSON+="]"
+    SHARED_JSON+="]"
+
+    cat > "$WORKSPACE_CONFIG" <<EOFWS
+{
+  "name": "$WORKSPACE_NAME",
+  "repos": $REPOS_JSON,
+  "shared": $SHARED_JSON,
+  "planning_repo": "",
+  "cross_repo_rules": [],
+  "dependency_order": [],
+  "domain_labels": []
+}
+EOFWS
+    jq '.' "$WORKSPACE_CONFIG" > "$WORKSPACE_CONFIG.tmp" && mv "$WORKSPACE_CONFIG.tmp" "$WORKSPACE_CONFIG"
+    info ".claude-workspace.json generated"
+    info "Edit it to set planning_repo, dependency_order, and domain_labels"
+  fi
+fi
+
+# Load seed rules into server on first install
+if [ -x "$SERVER_BIN" ] && [ -d "$TOOLKIT_DIR/templates/rules/seed" ]; then
+  info "Seed rules available at: $TOOLKIT_DIR/templates/rules/seed/"
 fi
 
 # ─────────────────────────────────────────────
