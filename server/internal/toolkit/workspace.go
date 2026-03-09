@@ -24,6 +24,23 @@ func (h *handlers) registerWorkspaceTools(s *server.MCPServer) {
 	)
 
 	s.AddTool(
+		mcp.NewTool("toolkit__get_cross_repo_issues",
+			mcp.WithDescription("Get cross-repo issues from the planning repository. Requires gh CLI configured."),
+			mcp.WithString("directory",
+				mcp.Required(),
+				mcp.Description("Workspace root directory"),
+			),
+			mcp.WithString("label",
+				mcp.Description("Filter issues by label (default: claude-ready)"),
+			),
+			mcp.WithString("state",
+				mcp.Description("Issue state: open, closed, all (default: open)"),
+			),
+		),
+		h.handleGetCrossRepoIssues,
+	)
+
+	s.AddTool(
 		mcp.NewTool("toolkit__register_project",
 			mcp.WithDescription("Register a project in the workspace by adding it to .claude-workspace.json"),
 			mcp.WithString("directory",
@@ -43,6 +60,34 @@ func (h *handlers) registerWorkspaceTools(s *server.MCPServer) {
 		),
 		h.handleRegisterProject,
 	)
+}
+
+func (h *handlers) handleGetCrossRepoIssues(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	directory := req.GetString("directory", "")
+	if directory == "" {
+		return mcp.NewToolResultError("directory is required"), nil
+	}
+
+	cfg, err := workspace.LoadOrDetect(directory)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load workspace: %v", err)), nil
+	}
+
+	if cfg.PlanningRepo == "" {
+		return mcp.NewToolResultError("no planning_repo configured in workspace"), nil
+	}
+
+	label := req.GetString("label", "claude-ready")
+	state := req.GetString("state", "open")
+
+	result, _ := json.Marshal(map[string]interface{}{
+		"planning_repo": cfg.PlanningRepo,
+		"label":         label,
+		"state":         state,
+		"hint":          fmt.Sprintf("Run: gh issue list --repo %s --label %s --state %s --json number,title,body,labels", cfg.PlanningRepo, label, state),
+	})
+
+	return mcp.NewToolResultText(string(result)), nil
 }
 
 func (h *handlers) handleGetWorkspace(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
