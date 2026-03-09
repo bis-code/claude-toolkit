@@ -2,10 +2,13 @@ package toolkit
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"time"
 
+	"github.com/bis-code/claude-toolkit/server/internal/db"
+	"github.com/bis-code/claude-toolkit/server/internal/rules"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -15,8 +18,36 @@ const (
 	ServerVersion = "4.0.0-dev"
 )
 
+// handlers holds the dependencies for MCP tool handlers.
+type handlers struct {
+	store  *db.Store
+	engine *rules.Engine
+}
+
 // NewServer creates a new MCP server with all toolkit tools registered.
-func NewServer() *server.MCPServer {
+// If store is nil, creates an in-memory store (useful for testing).
+func NewServer(opts ...Option) *server.MCPServer {
+	cfg := &config{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	var store *db.Store
+	if cfg.store != nil {
+		store = cfg.store
+	} else {
+		var err error
+		store, err = db.NewMemoryStore()
+		if err != nil {
+			panic(fmt.Sprintf("cannot create memory store: %v", err))
+		}
+	}
+
+	h := &handlers{
+		store:  store,
+		engine: rules.NewEngine(store),
+	}
+
 	s := server.NewMCPServer(
 		ServerName,
 		ServerVersion,
@@ -24,20 +55,32 @@ func NewServer() *server.MCPServer {
 		server.WithRecovery(),
 	)
 
-	registerTools(s)
+	h.registerTools(s)
 	return s
 }
 
-func registerTools(s *server.MCPServer) {
-	// Health check
+// Option configures the server.
+type Option func(*config)
+
+type config struct {
+	store *db.Store
+}
+
+// WithStore sets the database store for the server.
+func WithStore(store *db.Store) Option {
+	return func(c *config) {
+		c.store = store
+	}
+}
+
+func (h *handlers) registerTools(s *server.MCPServer) {
 	s.AddTool(
 		mcp.NewTool("toolkit__health_check",
 			mcp.WithDescription("Check server health, version, and status"),
 		),
-		handleHealthCheck,
+		h.handleHealthCheck,
 	)
 
-	// Rule CRUD tools
 	s.AddTool(
 		mcp.NewTool("toolkit__get_active_rules",
 			mcp.WithDescription("Get merged active rules for a project/task context. Merges 4 scopes (global → workspace → project → task), substitutes variables, and respects token budget."),
@@ -52,7 +95,7 @@ func registerTools(s *server.MCPServer) {
 				mcp.Description("Maximum token budget for merged rules (default: 2000)"),
 			),
 		),
-		handleGetActiveRules,
+		h.handleGetActiveRules,
 	)
 
 	s.AddTool(
@@ -80,7 +123,7 @@ func registerTools(s *server.MCPServer) {
 				mcp.Description("Why this rule exists (e.g., 'Failed 3 times in session X')"),
 			),
 		),
-		handleCreateRule,
+		h.handleCreateRule,
 	)
 
 	s.AddTool(
@@ -101,7 +144,7 @@ func registerTools(s *server.MCPServer) {
 				mcp.Description("New tags"),
 			),
 		),
-		handleUpdateRule,
+		h.handleUpdateRule,
 	)
 
 	s.AddTool(
@@ -112,7 +155,7 @@ func registerTools(s *server.MCPServer) {
 				mcp.Description("Rule ID to delete"),
 			),
 		),
-		handleDeleteRule,
+		h.handleDeleteRule,
 	)
 
 	s.AddTool(
@@ -129,7 +172,7 @@ func registerTools(s *server.MCPServer) {
 				mcp.Description("Filter by tech stack (e.g., 'go', 'unity')"),
 			),
 		),
-		handleListRules,
+		h.handleListRules,
 	)
 
 	s.AddTool(
@@ -147,45 +190,181 @@ func registerTools(s *server.MCPServer) {
 				mcp.Description("Context for the score (what happened)"),
 			),
 		),
-		handleScoreRule,
+		h.handleScoreRule,
 	)
 }
 
-func handleHealthCheck(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) handleHealthCheck(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	status := fmt.Sprintf(
 		`{"server": "%s", "version": "%s", "status": "healthy", "go_version": "%s", "platform": "%s/%s", "timestamp": "%s"}`,
-		ServerName,
-		ServerVersion,
-		runtime.Version(),
-		runtime.GOOS,
-		runtime.GOARCH,
+		ServerName, ServerVersion,
+		runtime.Version(), runtime.GOOS, runtime.GOARCH,
 		time.Now().UTC().Format(time.RFC3339),
 	)
 	return mcp.NewToolResultText(status), nil
 }
 
-// Stub handlers — will be wired to the rule engine in US-006/007/008/009
+func (h *handlers) handleGetActiveRules(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := req.GetString("project", "")
+	task := req.GetString("task", "")
+	tokenBudget := int(req.GetFloat("token_budget", 0))
 
-func handleGetActiveRules(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText(`{"status": "not_implemented", "message": "Rule engine not yet connected. This tool will merge 4-scope rules with variable substitution."}`), nil
+	activeRules, err := h.engine.GetActiveRules(rules.MergeContext{
+		Project:     project,
+		Task:        task,
+		TokenBudget: tokenBudget,
+	})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get active rules: %v", err)), nil
+	}
+
+	result, err := json.Marshal(map[string]interface{}{
+		"rules": activeRules,
+		"count": len(activeRules),
+	})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal rules: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(result)), nil
 }
 
-func handleCreateRule(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText(`{"status": "not_implemented", "message": "Rule storage not yet connected."}`), nil
+func (h *handlers) handleCreateRule(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	content := req.GetString("content", "")
+	scope := req.GetString("scope", "")
+	project := req.GetString("project", "")
+	workspace := req.GetString("workspace", "")
+	evidence := req.GetString("source_evidence", "")
+
+	if content == "" || scope == "" {
+		return mcp.NewToolResultError("content and scope are required"), nil
+	}
+
+	// Generate ID
+	id := fmt.Sprintf("r-%d", time.Now().UnixNano())
+
+	// Parse tags from the request
+	tags := make(map[string][]string)
+	if tagsRaw := req.GetString("tags", ""); tagsRaw != "" {
+		json.Unmarshal([]byte(tagsRaw), &tags)
+	}
+
+	// Check sensitivity
+	sensitive := rules.IsSensitive(content)
+	localOnly := sensitive
+
+	rule := &db.Rule{
+		ID:             id,
+		Content:        content,
+		Scope:          scope,
+		Project:        project,
+		Workspace:      workspace,
+		Tags:           tags,
+		Effectiveness:  0.5,
+		LocalOnly:      localOnly,
+		Sensitive:       sensitive,
+		CreatedFrom:    "session",
+		SourceEvidence: evidence,
+	}
+
+	if err := h.store.CreateRule(rule); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create rule: %v", err)), nil
+	}
+
+	result, _ := json.Marshal(map[string]interface{}{
+		"id":        id,
+		"sensitive": sensitive,
+		"local_only": localOnly,
+		"message":   "rule created",
+	})
+
+	return mcp.NewToolResultText(string(result)), nil
 }
 
-func handleUpdateRule(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText(`{"status": "not_implemented", "message": "Rule storage not yet connected."}`), nil
+func (h *handlers) handleUpdateRule(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := req.GetString("id", "")
+	if id == "" {
+		return mcp.NewToolResultError("id is required"), nil
+	}
+
+	rule, err := h.store.GetRule(id)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("rule not found: %v", err)), nil
+	}
+
+	if content := req.GetString("content", ""); content != "" {
+		rule.Content = content
+		rule.Sensitive = rules.IsSensitive(content)
+		rule.LocalOnly = rule.Sensitive
+	}
+	if scope := req.GetString("scope", ""); scope != "" {
+		rule.Scope = scope
+	}
+
+	if err := h.store.UpdateRule(rule); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to update rule: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(`{"message": "rule updated"}`), nil
 }
 
-func handleDeleteRule(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText(`{"status": "not_implemented", "message": "Rule storage not yet connected."}`), nil
+func (h *handlers) handleDeleteRule(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := req.GetString("id", "")
+	if id == "" {
+		return mcp.NewToolResultError("id is required"), nil
+	}
+
+	if err := h.store.DeleteRule(id); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to delete rule: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(`{"message": "rule deleted"}`), nil
 }
 
-func handleListRules(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText(`{"status": "not_implemented", "message": "Rule storage not yet connected."}`), nil
+func (h *handlers) handleListRules(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	scope := req.GetString("scope", "")
+	project := req.GetString("project", "")
+	techStack := req.GetString("tech_stack", "")
+
+	rulesList, err := h.store.ListRules(scope, project, techStack)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list rules: %v", err)), nil
+	}
+
+	result, err := json.Marshal(map[string]interface{}{
+		"rules": rulesList,
+		"count": len(rulesList),
+	})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal rules: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(result)), nil
 }
 
-func handleScoreRule(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText(`{"status": "not_implemented", "message": "Rule scoring not yet connected."}`), nil
+func (h *handlers) handleScoreRule(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id := req.GetString("id", "")
+	if id == "" {
+		return mcp.NewToolResultError("id is required"), nil
+	}
+
+	helpful := req.GetBool("helpful", false)
+	ctx := req.GetString("context", "")
+
+	if err := h.store.RecordScore(id, helpful, ctx, ""); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to score rule: %v", err)), nil
+	}
+
+	// Get updated effectiveness
+	rule, err := h.store.GetRule(id)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get rule: %v", err)), nil
+	}
+
+	result, _ := json.Marshal(map[string]interface{}{
+		"message":       "score recorded",
+		"effectiveness": rule.Effectiveness,
+	})
+
+	return mcp.NewToolResultText(string(result)), nil
 }
