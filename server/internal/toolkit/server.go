@@ -198,6 +198,17 @@ func (h *handlers) registerTools(s *server.MCPServer) {
 		),
 		h.handleScoreRule,
 	)
+	s.AddTool(
+		mcp.NewTool("toolkit__check_rule_updates",
+			mcp.WithDescription("Check for new seed rules and load any that are missing"),
+			mcp.WithString("seed_dir",
+				mcp.Required(),
+				mcp.Description("Path to the seed rules directory"),
+			),
+		),
+		h.handleCheckRuleUpdates,
+	)
+
 	h.registerTelemetryTools(s)
 	h.registerPatrolTools(s)
 	h.registerEvolutionTools(s)
@@ -347,6 +358,25 @@ func (h *handlers) handleListRules(_ context.Context, req mcp.CallToolRequest) (
 	})
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal rules: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(result)), nil
+}
+
+func (h *handlers) handleCheckRuleUpdates(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	seedDir := req.GetString("seed_dir", "")
+	if seedDir == "" {
+		return mcp.NewToolResultError("seed_dir is required"), nil
+	}
+
+	updateResult, err := rules.CheckAndUpdate(h.store, seedDir)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to check for updates: %v", err)), nil
+	}
+
+	result, err := json.Marshal(updateResult)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
 	}
 
 	return mcp.NewToolResultText(string(result)), nil

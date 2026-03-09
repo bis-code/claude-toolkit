@@ -1274,6 +1274,84 @@ func TestIntegration_RegisterProject_DuplicateReturnsError(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Rule update tool tests (US-020)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesUpdateTool(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	if !toolNames["toolkit__check_rule_updates"] {
+		t.Error("expected toolkit__check_rule_updates tool not found in registered tools")
+	}
+}
+
+func TestIntegration_CheckRuleUpdates(t *testing.T) {
+	c, _ := setupClient(t)
+
+	dir := t.TempDir()
+	os.WriteFile(fmt.Sprintf("%s/test.json", dir), []byte(`{
+		"rules": [
+			{"id": "seed-mcp-001", "content": "Rule via MCP", "scope": "global"},
+			{"id": "seed-mcp-002", "content": "Another rule", "scope": "global"}
+		]
+	}`), 0o644)
+
+	result := callTool(t, c, "toolkit__check_rule_updates", map[string]interface{}{
+		"seed_dir": dir,
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if int(resp["new_rules_loaded"].(float64)) != 2 {
+		t.Errorf("new_rules_loaded = %v, want 2", resp["new_rules_loaded"])
+	}
+	if int(resp["rules_skipped"].(float64)) != 0 {
+		t.Errorf("rules_skipped = %v, want 0", resp["rules_skipped"])
+	}
+	if int(resp["files_checked"].(float64)) != 1 {
+		t.Errorf("files_checked = %v, want 1", resp["files_checked"])
+	}
+	if resp["current_hash"] == "" {
+		t.Error("current_hash should not be empty")
+	}
+}
+
+func TestIntegration_CheckRuleUpdates_EmptyDir(t *testing.T) {
+	c, _ := setupClient(t)
+
+	dir := t.TempDir()
+
+	result := callTool(t, c, "toolkit__check_rule_updates", map[string]interface{}{
+		"seed_dir": dir,
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if int(resp["new_rules_loaded"].(float64)) != 0 {
+		t.Errorf("new_rules_loaded = %v, want 0", resp["new_rules_loaded"])
+	}
+	if int(resp["files_checked"].(float64)) != 0 {
+		t.Errorf("files_checked = %v, want 0", resp["files_checked"])
+	}
+}
+
 // makeIntegrationRepo creates a test repo for toolkit integration tests.
 func makeIntegrationRepo(t *testing.T, dir, name string, markers ...string) {
 	t.Helper()
