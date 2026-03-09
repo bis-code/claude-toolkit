@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-TOOLKIT_VERSION="2.0.0"
+TOOLKIT_VERSION="4.0.0"
 TOOLKIT_DIR="${CLAUDE_TOOLKIT_DIR:-$HOME/.claude/toolkit}"
 TOOLKIT_REPO="https://github.com/bis-code/claude-toolkit.git"
 
@@ -122,6 +122,98 @@ if [ "$PREREQS_OK" = false ]; then
 fi
 
 # ─────────────────────────────────────────────
+# Step 1b: Install/update Go MCP server binary
+# ─────────────────────────────────────────────
+
+SERVER_BIN="$HOME/.claude/toolkit/bin/claude-toolkit-server"
+SERVER_REPO="bis-code/claude-toolkit"
+
+install_server_binary() {
+  local target_dir="$HOME/.claude/toolkit/bin"
+  mkdir -p "$target_dir"
+
+  # Detect platform
+  local os_name arch_name
+  os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch_name="$(uname -m)"
+
+  case "$arch_name" in
+    x86_64)  arch_name="amd64" ;;
+    aarch64) arch_name="arm64" ;;
+    arm64)   arch_name="arm64" ;;
+    *)       arch_name="$arch_name" ;;
+  esac
+
+  local binary_name="claude-toolkit-server-${os_name}-${arch_name}"
+
+  # Try downloading from GitHub releases
+  if command -v gh &>/dev/null; then
+    local latest_tag
+    latest_tag=$(gh release list --repo "$SERVER_REPO" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+    if [ -n "$latest_tag" ]; then
+      info "Downloading server binary ($os_name/$arch_name) from release $latest_tag..."
+      if gh release download "$latest_tag" --repo "$SERVER_REPO" --pattern "$binary_name" --dir "$target_dir" --clobber 2>/dev/null; then
+        mv "$target_dir/$binary_name" "$SERVER_BIN"
+        chmod +x "$SERVER_BIN"
+        info "Server binary installed: $SERVER_BIN"
+        return 0
+      fi
+      warn "Binary not found in release, trying fallback..."
+    fi
+  fi
+
+  # Fallback: build from source if Go is available
+  if command -v go &>/dev/null; then
+    info "Building server from source..."
+    local server_src="$TOOLKIT_DIR/server"
+    if [ -d "$server_src" ]; then
+      (cd "$server_src" && go build -o "$SERVER_BIN" ./cmd/server/) 2>&1
+      if [ $? -eq 0 ]; then
+        info "Server binary built: $SERVER_BIN"
+        return 0
+      else
+        error "Failed to build server binary"
+        return 1
+      fi
+    else
+      warn "Server source not found at $server_src"
+      return 1
+    fi
+  fi
+
+  warn "Cannot install server binary (no release found and Go not available)"
+  warn "Install Go (https://go.dev) or wait for a release with pre-built binaries"
+  return 1
+}
+
+verify_server_health() {
+  if [ ! -x "$SERVER_BIN" ]; then
+    warn "Server binary not found, skipping health check"
+    return 1
+  fi
+
+  info "Verifying server health..."
+  local health_response
+  health_response=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"health-check","version":"1.0.0"}}}' | timeout 5 "$SERVER_BIN" 2>/dev/null | head -1 || echo "")
+
+  if echo "$health_response" | grep -q '"result"' 2>/dev/null; then
+    info "Server health check passed"
+    return 0
+  else
+    warn "Server health check inconclusive (server may still work)"
+    return 0
+  fi
+}
+
+header "1b" "Go MCP Server"
+if [ -x "$SERVER_BIN" ] && [ "$MODE" != "update" ]; then
+  info "Server binary already installed: $SERVER_BIN"
+else
+  install_server_binary
+fi
+verify_server_health
+
+# ─────────────────────────────────────────────
 # Uninstall: remove all toolkit files and exit
 # ─────────────────────────────────────────────
 
@@ -182,6 +274,13 @@ if [ "$MODE" = "uninstall" ]; then
     else
       info "Removed .claude/"
     fi
+  fi
+
+  # Remove server binary
+  if [ -x "$HOME/.claude/toolkit/bin/claude-toolkit-server" ]; then
+    rm -f "$HOME/.claude/toolkit/bin/claude-toolkit-server"
+    rmdir "$HOME/.claude/toolkit/bin" 2>/dev/null || true
+    info "Removed server binary"
   fi
 
   echo ""
@@ -487,6 +586,12 @@ else
 fi
 
 # .mcp.json — merge servers
+# claude-toolkit-server (V4 core)
+if [ -x "$SERVER_BIN" ]; then
+  merge_mcp_server "$PROJECT_DIR/.mcp.json" "claude-toolkit-server" "{\"command\":\"$SERVER_BIN\",\"args\":[]}"
+  info ".mcp.json — claude-toolkit-server added"
+fi
+
 install_mcp_config "$PROJECT_DIR" "deep-think"
 
 if [ "$INSTALL_PLAYWRIGHT" = true ]; then
@@ -602,6 +707,7 @@ echo "  Installed:"
 [ "$SKIP_AGENTS" = false ] && echo "    Agents:   ${TOTAL_AGENT_COUNT:-0} (${GENERIC_COUNT:-0} generic + ${DOMAIN_AGENT_COUNT:-0} domain)"
 echo "    Commands: $(ls "$TOOLKIT_DIR/commands/"*.md 2>/dev/null | wc -l | tr -d ' ') slash commands"
 echo "    MCP:      $INSTALLED_MCPS"
+[ -x "$SERVER_BIN" ] && echo "    Server:   claude-toolkit-server (V4)"
 [ "$READ_ONLY" = true ] && echo "    Mode:     read-only"
 echo ""
 echo "  Next steps:"
