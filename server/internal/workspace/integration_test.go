@@ -73,3 +73,91 @@ func TestIntegration_AutoDetectTestWorkspace(t *testing.T) {
 		t.Errorf("auto-detected name = %q, want 'workspace'", cfg.Name)
 	}
 }
+
+func TestIntegration_DetectTurborepoMonorepo(t *testing.T) {
+	_, filename, _, _ := runtime.Caller(0)
+	testDir := filepath.Join(filepath.Dir(filename), "..", "..", "..", "test", "workspace-turborepo")
+
+	cfg, err := workspace.Detect(testDir)
+	if err != nil {
+		t.Fatalf("failed to detect workspace: %v", err)
+	}
+
+	if len(cfg.Repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(cfg.Repos))
+	}
+
+	repo := cfg.Repos[0]
+	if repo.Path != "myapp" {
+		t.Errorf("repo path = %q, want %q", repo.Path, "myapp")
+	}
+	if repo.MonorepoType != "turborepo" {
+		t.Errorf("MonorepoType = %q, want %q", repo.MonorepoType, "turborepo")
+	}
+
+	// apps/web (ts), apps/api (ts), packages/ui (ts), packages/config (ts)
+	if len(repo.SubProjects) != 4 {
+		t.Fatalf("expected 4 sub-projects, got %d: %+v", len(repo.SubProjects), repo.SubProjects)
+	}
+
+	// Verify sub-project paths
+	spPaths := make(map[string]string)
+	for _, sp := range repo.SubProjects {
+		spPaths[sp.Path] = sp.Type
+	}
+
+	for _, expected := range []string{"apps/web", "apps/api", "packages/ui", "packages/config"} {
+		if _, ok := spPaths[expected]; !ok {
+			t.Errorf("expected sub-project %q not found", expected)
+		}
+	}
+
+	// apps/web has tsconfig.json → typescript
+	if spPaths["apps/web"] != "typescript" {
+		t.Errorf("apps/web type = %q, want %q", spPaths["apps/web"], "typescript")
+	}
+}
+
+func TestIntegration_DetectMixedLanguageMonorepo(t *testing.T) {
+	_, filename, _, _ := runtime.Caller(0)
+	testDir := filepath.Join(filepath.Dir(filename), "..", "..", "..", "test", "workspace-mixed")
+
+	cfg, err := workspace.Detect(testDir)
+	if err != nil {
+		t.Fatalf("failed to detect workspace: %v", err)
+	}
+
+	if len(cfg.Repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(cfg.Repos))
+	}
+
+	repo := cfg.Repos[0]
+	if repo.Path != "fullstack" {
+		t.Errorf("repo path = %q, want %q", repo.Path, "fullstack")
+	}
+	if repo.MonorepoType != "mixed" {
+		t.Errorf("MonorepoType = %q, want %q", repo.MonorepoType, "mixed")
+	}
+
+	// backend (go) + frontend (typescript), proto/ should be excluded (no tech markers)
+	if len(repo.SubProjects) != 2 {
+		t.Fatalf("expected 2 sub-projects, got %d: %+v", len(repo.SubProjects), repo.SubProjects)
+	}
+
+	spTypes := make(map[string]string)
+	for _, sp := range repo.SubProjects {
+		spTypes[sp.Path] = sp.Type
+	}
+
+	if spTypes["backend"] != "go" {
+		t.Errorf("backend type = %q, want %q", spTypes["backend"], "go")
+	}
+	if spTypes["frontend"] != "typescript" {
+		t.Errorf("frontend type = %q, want %q", spTypes["frontend"], "typescript")
+	}
+
+	// proto/ should NOT be in sub-projects
+	if _, ok := spTypes["proto"]; ok {
+		t.Error("proto/ should not be detected as a sub-project (no tech markers)")
+	}
+}

@@ -41,6 +41,13 @@ func Detect(parentDir string) (*Config, error) {
 			Type:   detectTechStack(fullPath),
 			Branch: detectBranch(fullPath),
 		}
+
+		monorepoType, subProjects := DetectMonorepo(fullPath)
+		if monorepoType != "" {
+			repo.MonorepoType = monorepoType
+			repo.SubProjects = subProjects
+		}
+
 		cfg.Repos = append(cfg.Repos, repo)
 	}
 
@@ -121,4 +128,133 @@ func fileExists(path string) bool {
 func matchesGlob(repoPath, pattern string) bool {
 	matches, err := filepath.Glob(filepath.Join(repoPath, pattern))
 	return err == nil && len(matches) > 0
+}
+
+// skipDirs is the set of directory names to ignore when scanning for mixed-language sub-projects.
+var skipDirs = map[string]bool{
+	"node_modules":  true,
+	"vendor":        true,
+	".git":          true,
+	"dist":          true,
+	"build":         true,
+	"coverage":      true,
+	".next":         true,
+	"__pycache__":   true,
+	".pytest_cache": true,
+	"docs":          true,
+	"scripts":       true,
+	".github":       true,
+	".vscode":       true,
+	".idea":         true,
+	"tmp":           true,
+	"log":           true,
+	"logs":          true,
+	".turbo":        true,
+	".nx":           true,
+}
+
+// DetectMonorepo checks whether a repository is a monorepo and returns its type
+// and sub-projects. Returns ("", nil) if not a monorepo.
+func DetectMonorepo(repoPath string) (string, []SubProject) {
+	// Try Turborepo first.
+	if fileExists(filepath.Join(repoPath, "turbo.json")) {
+		subs := detectTurborepo(repoPath)
+		if len(subs) > 0 {
+			return "turborepo", subs
+		}
+		return "", nil
+	}
+
+	// Fall back to mixed-language detection.
+	subs := detectMixedLanguage(repoPath)
+	if len(subs) >= 2 {
+		return "mixed", subs
+	}
+
+	return "", nil
+}
+
+// detectTurborepo scans apps/ and packages/ subdirectories for tech stacks.
+func detectTurborepo(repoPath string) []SubProject {
+	var subs []SubProject
+
+	for _, parent := range []string{"apps", "packages"} {
+		parentPath := filepath.Join(repoPath, parent)
+		entries, err := os.ReadDir(parentPath)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+
+			subPath := filepath.Join(parentPath, entry.Name())
+			techType := detectTechStack(subPath)
+			if techType == "" {
+				continue
+			}
+
+			subs = append(subs, SubProject{
+				Path:        filepath.Join(parent, entry.Name()),
+				Type:        techType,
+				TestCommand: DetectTestCommand(techType),
+			})
+		}
+	}
+
+	return subs
+}
+
+// detectMixedLanguage scans top-level subdirectories for different tech stacks.
+// Returns sub-projects only if 2+ subdirectories have detected tech stacks.
+func detectMixedLanguage(repoPath string) []SubProject {
+	entries, err := os.ReadDir(repoPath)
+	if err != nil {
+		return nil
+	}
+
+	var subs []SubProject
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if skipDirs[name] {
+			continue
+		}
+
+		subPath := filepath.Join(repoPath, name)
+		techType := detectTechStack(subPath)
+		if techType == "" {
+			continue
+		}
+
+		subs = append(subs, SubProject{
+			Path:        name,
+			Type:        techType,
+			TestCommand: DetectTestCommand(techType),
+		})
+	}
+
+	return subs
+}
+
+// DetectTestCommand returns the conventional test command for a given tech type.
+func DetectTestCommand(techType string) string {
+	switch techType {
+	case "go":
+		return "go test ./..."
+	case "typescript":
+		return "npm test"
+	case "python":
+		return "pytest"
+	case "rust":
+		return "cargo test"
+	default:
+		return ""
+	}
 }

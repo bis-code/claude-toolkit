@@ -507,3 +507,204 @@ func TestMerge_UserProvidesRepos_DetectedIgnored(t *testing.T) {
 		t.Errorf("repos[0].path = %q, want %q", cfg.Repos[0].Path, "svc-a")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Monorepo detection tests
+// ---------------------------------------------------------------------------
+
+// makeSubDir creates a subdirectory under parentDir/name with optional marker files.
+func makeSubDir(t *testing.T, parentDir, name string, markers ...string) string {
+	t.Helper()
+	dir := filepath.Join(parentDir, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("makeSubDir: MkdirAll: %v", err)
+	}
+	for _, m := range markers {
+		if err := os.WriteFile(filepath.Join(dir, m), []byte("{}"), 0o644); err != nil {
+			t.Fatalf("makeSubDir: write marker %s: %v", m, err)
+		}
+	}
+	return dir
+}
+
+func TestDetectMonorepo_Turborepo(t *testing.T) {
+	dir := t.TempDir()
+	// Create turbo.json at root
+	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{"pipeline":{}}`), 0o644)
+	// Create apps with tech markers
+	makeSubDir(t, dir, "apps/web", "package.json", "tsconfig.json")
+	makeSubDir(t, dir, "apps/api", "package.json")
+
+	monorepoType, subProjects := workspace.DetectMonorepo(dir)
+
+	if monorepoType != "turborepo" {
+		t.Errorf("monorepoType = %q, want %q", monorepoType, "turborepo")
+	}
+	if len(subProjects) != 2 {
+		t.Fatalf("expected 2 sub-projects, got %d", len(subProjects))
+	}
+
+	// Verify sub-project paths are relative
+	for _, sp := range subProjects {
+		if filepath.IsAbs(sp.Path) {
+			t.Errorf("sub-project path should be relative, got: %q", sp.Path)
+		}
+	}
+}
+
+func TestDetectMonorepo_TurborepoAppsAndPackages(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{"pipeline":{}}`), 0o644)
+	makeSubDir(t, dir, "apps/web", "package.json", "tsconfig.json")
+	makeSubDir(t, dir, "packages/ui", "package.json", "tsconfig.json")
+	makeSubDir(t, dir, "packages/config", "package.json")
+
+	monorepoType, subProjects := workspace.DetectMonorepo(dir)
+
+	if monorepoType != "turborepo" {
+		t.Errorf("monorepoType = %q, want %q", monorepoType, "turborepo")
+	}
+	if len(subProjects) != 3 {
+		t.Fatalf("expected 3 sub-projects (1 app + 2 packages), got %d", len(subProjects))
+	}
+
+	// Verify paths include the parent dir prefix
+	paths := make(map[string]bool)
+	for _, sp := range subProjects {
+		paths[sp.Path] = true
+	}
+	for _, expected := range []string{"apps/web", "packages/ui", "packages/config"} {
+		if !paths[expected] {
+			t.Errorf("expected sub-project %q not found in %v", expected, paths)
+		}
+	}
+}
+
+func TestDetectMonorepo_TurborepoNoApps(t *testing.T) {
+	dir := t.TempDir()
+	// turbo.json exists but no apps/ or packages/ directories
+	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{"pipeline":{}}`), 0o644)
+
+	monorepoType, subProjects := workspace.DetectMonorepo(dir)
+
+	// No sub-projects found, so not treated as a monorepo
+	if monorepoType != "" {
+		t.Errorf("monorepoType = %q, want empty (no apps/packages)", monorepoType)
+	}
+	if len(subProjects) != 0 {
+		t.Errorf("expected 0 sub-projects, got %d", len(subProjects))
+	}
+}
+
+func TestDetectMonorepo_MixedLanguage(t *testing.T) {
+	dir := t.TempDir()
+	makeSubDir(t, dir, "backend", "go.mod")
+	makeSubDir(t, dir, "frontend", "package.json", "tsconfig.json")
+
+	monorepoType, subProjects := workspace.DetectMonorepo(dir)
+
+	if monorepoType != "mixed" {
+		t.Errorf("monorepoType = %q, want %q", monorepoType, "mixed")
+	}
+	if len(subProjects) != 2 {
+		t.Fatalf("expected 2 sub-projects, got %d", len(subProjects))
+	}
+
+	// Verify types
+	types := make(map[string]string)
+	for _, sp := range subProjects {
+		types[sp.Path] = sp.Type
+	}
+	if types["backend"] != "go" {
+		t.Errorf("backend type = %q, want %q", types["backend"], "go")
+	}
+	if types["frontend"] != "typescript" {
+		t.Errorf("frontend type = %q, want %q", types["frontend"], "typescript")
+	}
+}
+
+func TestDetectMonorepo_MixedSkipsCommonDirs(t *testing.T) {
+	dir := t.TempDir()
+	makeSubDir(t, dir, "backend", "go.mod")
+	makeSubDir(t, dir, "frontend", "package.json", "tsconfig.json")
+	// These should be skipped
+	makeSubDir(t, dir, "node_modules/some-pkg", "package.json")
+	makeSubDir(t, dir, "vendor/some-dep", "go.mod")
+	makeSubDir(t, dir, ".git")
+
+	monorepoType, subProjects := workspace.DetectMonorepo(dir)
+
+	if monorepoType != "mixed" {
+		t.Errorf("monorepoType = %q, want %q", monorepoType, "mixed")
+	}
+	// Only backend and frontend, not node_modules or vendor
+	if len(subProjects) != 2 {
+		t.Fatalf("expected 2 sub-projects (skipping common dirs), got %d", len(subProjects))
+	}
+}
+
+func TestDetectMonorepo_SingleSubdirNotMixed(t *testing.T) {
+	dir := t.TempDir()
+	makeSubDir(t, dir, "backend", "go.mod")
+	makeSubDir(t, dir, "docs") // no tech markers
+
+	monorepoType, subProjects := workspace.DetectMonorepo(dir)
+
+	// Only 1 subdir with tech stack — not enough for "mixed"
+	if monorepoType != "" {
+		t.Errorf("monorepoType = %q, want empty (single subdir is not a monorepo)", monorepoType)
+	}
+	if len(subProjects) != 0 {
+		t.Errorf("expected 0 sub-projects, got %d", len(subProjects))
+	}
+}
+
+func TestDetectTestCommand(t *testing.T) {
+	tests := []struct {
+		techType string
+		want     string
+	}{
+		{"go", "go test ./..."},
+		{"typescript", "npm test"},
+		{"python", "pytest"},
+		{"rust", "cargo test"},
+		{"csharp", ""},
+		{"", ""},
+		{"unknown", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.techType, func(t *testing.T) {
+			got := workspace.DetectTestCommand(tt.techType)
+			if got != tt.want {
+				t.Errorf("DetectTestCommand(%q) = %q, want %q", tt.techType, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetect_MonorepoInWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	// Create a repo that is also a turborepo monorepo
+	repoDir := makeTestRepo(t, dir, "myapp", "package.json")
+	os.WriteFile(filepath.Join(repoDir, "turbo.json"), []byte(`{"pipeline":{}}`), 0o644)
+	makeSubDir(t, repoDir, "apps/web", "package.json", "tsconfig.json")
+	makeSubDir(t, repoDir, "apps/api", "package.json")
+
+	cfg, err := workspace.Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect returned error: %v", err)
+	}
+
+	if len(cfg.Repos) != 1 {
+		t.Fatalf("expected 1 repo, got %d", len(cfg.Repos))
+	}
+
+	repo := cfg.Repos[0]
+	if repo.MonorepoType != "turborepo" {
+		t.Errorf("MonorepoType = %q, want %q", repo.MonorepoType, "turborepo")
+	}
+	if len(repo.SubProjects) != 2 {
+		t.Errorf("expected 2 sub-projects, got %d", len(repo.SubProjects))
+	}
+}

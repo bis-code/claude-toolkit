@@ -13,7 +13,16 @@ type Config struct {
 
 // Repo represents a single repository in the workspace.
 type Repo struct {
-	Path   string `json:"path"`
-	Branch string `json:"branch,omitempty"`
-	Type   string `json:"type,omitempty"`
+	Path         string       `json:"path"`
+	Branch       string       `json:"branch,omitempty"`
+	Type         string       `json:"type,omitempty"`
+	MonorepoType string       `json:"monorepo_type,omitempty"`
+	SubProjects  []SubProject `json:"sub_projects,omitempty"`
+}
+
+// SubProject represents a sub-directory inside a monorepo with its own tech stack.
+type SubProject struct {
+	Path        string `json:"path"`
+	Type        string `json:"type"`
+	TestCommand string `json:"test_command,omitempty"`
 }
