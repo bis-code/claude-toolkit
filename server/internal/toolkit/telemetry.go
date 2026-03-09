@@ -152,6 +152,49 @@ func (h *handlers) registerTelemetryTools(s *server.MCPServer) {
 		),
 		h.handleGetProjectStats,
 	)
+
+	s.AddTool(
+		mcp.NewTool("toolkit__mark_verified",
+			mcp.WithDescription("Mark a task as verified after completing changes"),
+			mcp.WithString("session_id",
+				mcp.Required(),
+				mcp.Description("Session ID"),
+			),
+			mcp.WithString("task_id",
+				mcp.Required(),
+				mcp.Description("Task identifier"),
+			),
+			mcp.WithString("details",
+				mcp.Description("Optional verification details"),
+			),
+			mcp.WithString("project",
+				mcp.Description("Project name (used when auto-creating the session)"),
+			),
+		),
+		h.handleMarkVerified,
+	)
+
+	s.AddTool(
+		mcp.NewTool("toolkit__mark_failed",
+			mcp.WithDescription("Mark a task as failed verification"),
+			mcp.WithString("session_id",
+				mcp.Required(),
+				mcp.Description("Session ID"),
+			),
+			mcp.WithString("task_id",
+				mcp.Required(),
+				mcp.Description("Task identifier"),
+			),
+			mcp.WithString("reason",
+				mcp.Required(),
+				mcp.Description("Reason for verification failure"),
+			),
+			mcp.WithString("project",
+				mcp.Description("Project name (used when auto-creating the session)"),
+			),
+		),
+		h.handleMarkFailed,
+	)
 }
 
 // handleStartSession explicitly creates a new session.
@@ -309,8 +352,9 @@ func (h *handlers) handleEndSession(_ context.Context, req mcp.CallToolRequest) 
 	confidence := req.GetFloat("confidence", 0)
 	tasksCompleted := int(req.GetFloat("tasks_completed", 0))
 	tasksFailed := int(req.GetFloat("tasks_failed", 0))
+	tasksVerified := int(req.GetFloat("tasks_verified", 0))
 
-	if err := h.store.EndSession(sessionID, summary, confidence, tasksCompleted, tasksFailed); err != nil {
+	if err := h.store.EndSession(sessionID, summary, confidence, tasksCompleted, tasksFailed, tasksVerified); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to end session: %v", err)), nil
 	}
 
@@ -367,6 +411,7 @@ func (h *handlers) handleGetProjectStats(_ context.Context, req mcp.CallToolRequ
 	totalTasksCompleted := 0
 	totalTasksFailed := 0
 
+	var verifiedCount, verificationFailedCount int
 	for _, sess := range sessions {
 		totalTasksCompleted += sess.TasksCompleted
 		totalTasksFailed += sess.TasksFailed
@@ -379,12 +424,25 @@ func (h *handlers) handleGetProjectStats(_ context.Context, req mcp.CallToolRequ
 		totalEvents += len(events)
 		for _, e := range events {
 			eventsByType[e.Type]++
+			if e.Type == "verification" {
+				if e.Result == "verified" {
+					verifiedCount++
+				} else if e.Result == "failed" {
+					verificationFailedCount++
+				}
+			}
 		}
 	}
 
 	avgConfidence := 0.0
 	if totalSessions > 0 {
 		avgConfidence = totalConfidence / float64(totalSessions)
+	}
+
+	verificationRate := 0.0
+	verificationTotal := verifiedCount + verificationFailedCount
+	if verificationTotal > 0 {
+		verificationRate = float64(verifiedCount) / float64(verificationTotal)
 	}
 
 	result, err := json.Marshal(map[string]interface{}{
@@ -395,6 +453,9 @@ func (h *handlers) handleGetProjectStats(_ context.Context, req mcp.CallToolRequ
 		"avg_confidence":        avgConfidence,
 		"total_tasks_completed": totalTasksCompleted,
 		"total_tasks_failed":    totalTasksFailed,
+		"total_tasks_verified":  verifiedCount,
+		"verification_failed":   verificationFailedCount,
+		"verification_rate":     verificationRate,
 	})
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal stats: %v", err)), nil
@@ -419,4 +480,83 @@ func (h *handlers) ensureSession(sessionID, project string) error {
 		Project:   project,
 		StartedAt: time.Now().UTC(),
 	})
+}
+
+// handleMarkVerified records a verification success event and increments the session counter.
+func (h *handlers) handleMarkVerified(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID := req.GetString("session_id", "")
+	taskID := req.GetString("task_id", "")
+
+	if sessionID == "" || taskID == "" {
+		return mcp.NewToolResultError("session_id and task_id are required"), nil
+	}
+
+	if err := h.ensureSession(sessionID, req.GetString("project", "unknown")); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to ensure session: %v", err)), nil
+	}
+
+	details := req.GetString("details", "")
+	eventID := fmt.Sprintf("e-%d", time.Now().UnixNano())
+	event := &db.Event{
+		ID:        eventID,
+		SessionID: sessionID,
+		Type:      "verification",
+		Result:    "verified",
+		Context:   taskID,
+		Details:   details,
+		Timestamp: time.Now().UTC(),
+	}
+	if err := h.store.CreateEvent(event); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create verification event: %v", err)), nil
+	}
+
+	if err := h.store.IncrementTasksVerified(sessionID); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to increment tasks_verified: %v", err)), nil
+	}
+
+	result, _ := json.Marshal(map[string]interface{}{
+		"status":   "verified",
+		"task_id":  taskID,
+		"event_id": eventID,
+	})
+	return mcp.NewToolResultText(string(result)), nil
+}
+
+// handleMarkFailed records a verification failure event.
+func (h *handlers) handleMarkFailed(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID := req.GetString("session_id", "")
+	taskID := req.GetString("task_id", "")
+	reason := req.GetString("reason", "")
+
+	if sessionID == "" || taskID == "" {
+		return mcp.NewToolResultError("session_id and task_id are required"), nil
+	}
+	if reason == "" {
+		return mcp.NewToolResultError("reason is required"), nil
+	}
+
+	if err := h.ensureSession(sessionID, req.GetString("project", "unknown")); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to ensure session: %v", err)), nil
+	}
+
+	eventID := fmt.Sprintf("e-%d", time.Now().UnixNano())
+	event := &db.Event{
+		ID:        eventID,
+		SessionID: sessionID,
+		Type:      "verification",
+		Result:    "failed",
+		Context:   taskID,
+		Details:   reason,
+		Timestamp: time.Now().UTC(),
+	}
+	if err := h.store.CreateEvent(event); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create verification failure event: %v", err)), nil
+	}
+
+	result, _ := json.Marshal(map[string]interface{}{
+		"status":   "failed",
+		"task_id":  taskID,
+		"event_id": eventID,
+	})
+	return mcp.NewToolResultText(string(result)), nil
 }

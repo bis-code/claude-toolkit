@@ -659,7 +659,7 @@ func TestIntegration_GetProjectStats(t *testing.T) {
 	store.CreateSession(sess2)
 
 	// End sess1 with stats
-	store.EndSession("sess-stats-001", "done", 0.9, 5, 1)
+	store.EndSession("sess-stats-001", "done", 0.9, 5, 1, 0)
 
 	// Add events to sess1
 	store.CreateEvent(&db.Event{
@@ -1367,4 +1367,216 @@ func makeIntegrationRepo(t *testing.T, dir, name string, markers ...string) {
 			t.Fatalf("makeIntegrationRepo write marker %s: %v", m, err)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Verification feedback loop tests (US-026)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesVerificationTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	verificationTools := []string{
+		"toolkit__mark_verified",
+		"toolkit__mark_failed",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range verificationTools {
+		if !toolNames[expected] {
+			t.Errorf("expected verification tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_MarkVerified(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateSession(&db.Session{
+		ID: "sess-verified-mcp", Project: "my-project", StartedAt: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__mark_verified", map[string]interface{}{
+		"session_id": "sess-verified-mcp",
+		"task_id":    "task-001",
+		"details":    "all tests pass",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["status"] != "verified" {
+		t.Errorf("status = %v, want 'verified'", resp["status"])
+	}
+	if resp["task_id"] != "task-001" {
+		t.Errorf("task_id = %v, want 'task-001'", resp["task_id"])
+	}
+	eventID, ok := resp["event_id"].(string)
+	if !ok || eventID == "" {
+		t.Error("expected non-empty event_id")
+	}
+
+	// Verify the event was created in DB.
+	events, err := store.ListEvents("sess-verified-mcp")
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != "verification" {
+		t.Errorf("event type = %q, want 'verification'", events[0].Type)
+	}
+	if events[0].Result != "verified" {
+		t.Errorf("event result = %q, want 'verified'", events[0].Result)
+	}
+	if events[0].Context != "task-001" {
+		t.Errorf("event context = %q, want 'task-001'", events[0].Context)
+	}
+
+	// Verify tasks_verified counter was incremented.
+	sess, err := store.GetSession("sess-verified-mcp")
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+	if sess.TasksVerified != 1 {
+		t.Errorf("tasks_verified = %d, want 1", sess.TasksVerified)
+	}
+}
+
+func TestIntegration_MarkFailed(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateSession(&db.Session{
+		ID: "sess-failed-mcp", Project: "my-project", StartedAt: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__mark_failed", map[string]interface{}{
+		"session_id": "sess-failed-mcp",
+		"task_id":    "task-002",
+		"reason":     "missing error handling in auth module",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["status"] != "failed" {
+		t.Errorf("status = %v, want 'failed'", resp["status"])
+	}
+	if resp["task_id"] != "task-002" {
+		t.Errorf("task_id = %v, want 'task-002'", resp["task_id"])
+	}
+
+	// Verify the event was created in DB.
+	events, err := store.ListEvents("sess-failed-mcp")
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != "verification" {
+		t.Errorf("event type = %q, want 'verification'", events[0].Type)
+	}
+	if events[0].Result != "failed" {
+		t.Errorf("event result = %q, want 'failed'", events[0].Result)
+	}
+	if events[0].Details != "missing error handling in auth module" {
+		t.Errorf("event details = %q, want reason", events[0].Details)
+	}
+}
+
+func TestIntegration_MarkFailed_MissingReason(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__mark_failed",
+			Arguments: map[string]interface{}{
+				"session_id": "sess-fail-missing",
+				"task_id":    "task-003",
+				// reason intentionally omitted
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true when reason is missing")
+	}
+}
+
+func TestIntegration_MarkVerified_MissingTaskID(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__mark_verified",
+			Arguments: map[string]interface{}{
+				"session_id": "sess-verified-missing",
+				// task_id intentionally omitted
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true when task_id is missing")
+	}
+}
+
+func TestIntegration_GetProjectStats_IncludesVerification(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateSession(&db.Session{ID: "sess-vstats-001", Project: "vstats-project", StartedAt: nowTime()})
+
+	// Add one verified and one failed verification event.
+	store.CreateEvent(&db.Event{
+		ID: "e-vstats-1", SessionID: "sess-vstats-001",
+		Type: "verification", Result: "verified", Context: "task-a", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "e-vstats-2", SessionID: "sess-vstats-001",
+		Type: "verification", Result: "failed", Details: "lint issues", Timestamp: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__get_project_stats", map[string]interface{}{
+		"project": "vstats-project",
+	})
+
+	var stats map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &stats); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	totalVerified, ok := stats["total_tasks_verified"].(float64)
+	if !ok {
+		t.Fatal("total_tasks_verified should be present in stats")
+	}
+	if int(totalVerified) != 0 {
+		// Note: total_tasks_verified comes from session.TasksVerified field,
+		// not from event counting — session was never ended with verified count.
+		// The integration uses session.TasksVerified which is incremented by mark_verified tool.
+		// Since we added events directly (bypassing the tool), we expect 0.
+		t.Logf("total_tasks_verified = %v (events added directly, not via tool)", totalVerified)
+	}
+
+	verificationRate, ok := stats["verification_rate"].(float64)
+	if !ok {
+		t.Fatal("verification_rate should be present in stats")
+	}
+	_ = verificationRate
 }

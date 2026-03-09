@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	summary TEXT DEFAULT '',
 	confidence REAL DEFAULT 0,
 	tasks_completed INTEGER DEFAULT 0,
-	tasks_failed INTEGER DEFAULT 0
+	tasks_failed INTEGER DEFAULT 0,
+	tasks_verified INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 
@@ -91,7 +92,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 `
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 // Store provides database operations for the toolkit.
 type Store struct {
@@ -140,6 +141,7 @@ type Session struct {
 	Confidence     float64    `json:"confidence,omitempty"`
 	TasksCompleted int        `json:"tasks_completed"`
 	TasksFailed    int        `json:"tasks_failed"`
+	TasksVerified  int        `json:"tasks_verified"`
 }
 
 // Event represents a telemetry event in the database.
@@ -219,7 +221,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	summary TEXT DEFAULT '',
 	confidence REAL DEFAULT 0,
 	tasks_completed INTEGER DEFAULT 0,
-	tasks_failed INTEGER DEFAULT 0
+	tasks_failed INTEGER DEFAULT 0,
+	tasks_verified INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 CREATE TABLE IF NOT EXISTS events (
@@ -260,6 +263,16 @@ CREATE INDEX IF NOT EXISTS idx_improvements_status ON improvements(status);
 UPDATE schema_version SET version = 3;`
 		if _, err := db.Exec(migration); err != nil {
 			return fmt.Errorf("migration v3 failed: %w", err)
+		}
+	}
+
+	// Migration v4: Add tasks_verified to sessions
+	if version < 4 {
+		migration := `
+ALTER TABLE sessions ADD COLUMN tasks_verified INTEGER DEFAULT 0;
+UPDATE schema_version SET version = 4;`
+		if _, err := db.Exec(migration); err != nil {
+			return fmt.Errorf("migration v4 failed: %w", err)
 		}
 	}
 
@@ -604,12 +617,12 @@ func (s *Store) UpdateImprovementStatus(id, status, reason string) error {
 // CreateSession inserts a new session into the database.
 func (s *Store) CreateSession(session *Session) error {
 	_, err := s.db.Exec(`
-		INSERT INTO sessions (id, project, started_at, summary, confidence, tasks_completed, tasks_failed)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO sessions (id, project, started_at, summary, confidence, tasks_completed, tasks_failed, tasks_verified)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.Project,
 		session.StartedAt.Format(time.RFC3339),
 		session.Summary, session.Confidence,
-		session.TasksCompleted, session.TasksFailed,
+		session.TasksCompleted, session.TasksFailed, session.TasksVerified,
 	)
 	return err
 }
@@ -621,11 +634,11 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	var endedAt sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT id, project, started_at, ended_at, summary, confidence, tasks_completed, tasks_failed
+		SELECT id, project, started_at, ended_at, summary, confidence, tasks_completed, tasks_failed, tasks_verified
 		FROM sessions WHERE id = ?`, id).Scan(
 		&sess.ID, &sess.Project, &startedAt, &endedAt,
 		&sess.Summary, &sess.Confidence,
-		&sess.TasksCompleted, &sess.TasksFailed,
+		&sess.TasksCompleted, &sess.TasksFailed, &sess.TasksVerified,
 	)
 	if err != nil {
 		return nil, err
@@ -641,12 +654,12 @@ func (s *Store) GetSession(id string) (*Session, error) {
 }
 
 // EndSession marks a session as ended with summary data.
-func (s *Store) EndSession(id string, summary string, confidence float64, tasksCompleted, tasksFailed int) error {
+func (s *Store) EndSession(id string, summary string, confidence float64, tasksCompleted, tasksFailed, tasksVerified int) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	result, err := s.db.Exec(`
-		UPDATE sessions SET ended_at=?, summary=?, confidence=?, tasks_completed=?, tasks_failed=?
+		UPDATE sessions SET ended_at=?, summary=?, confidence=?, tasks_completed=?, tasks_failed=?, tasks_verified=?
 		WHERE id=?`,
-		now, summary, confidence, tasksCompleted, tasksFailed, id,
+		now, summary, confidence, tasksCompleted, tasksFailed, tasksVerified, id,
 	)
 	if err != nil {
 		return err
@@ -697,7 +710,7 @@ func (s *Store) ListEvents(sessionID string) ([]*Event, error) {
 
 // ListSessions returns sessions, optionally filtered by project, ordered by started_at DESC.
 func (s *Store) ListSessions(project string, limit int) ([]*Session, error) {
-	query := "SELECT id, project, started_at, ended_at, summary, confidence, tasks_completed, tasks_failed FROM sessions"
+	query := "SELECT id, project, started_at, ended_at, summary, confidence, tasks_completed, tasks_failed, tasks_verified FROM sessions"
 	args := []interface{}{}
 
 	if project != "" {
@@ -727,7 +740,7 @@ func (s *Store) ListSessions(project string, limit int) ([]*Session, error) {
 		err := rows.Scan(
 			&sess.ID, &sess.Project, &startedAt, &endedAt,
 			&sess.Summary, &sess.Confidence,
-			&sess.TasksCompleted, &sess.TasksFailed,
+			&sess.TasksCompleted, &sess.TasksFailed, &sess.TasksVerified,
 		)
 		if err != nil {
 			return nil, err
@@ -789,4 +802,20 @@ func (s *Store) CountDeprecatedRules() (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM rules WHERE deprecated = 1").Scan(&count)
 	return count, err
+}
+
+// IncrementTasksVerified atomically increments tasks_verified by 1 for the given session.
+func (s *Store) IncrementTasksVerified(sessionID string) error {
+	result, err := s.db.Exec(
+		"UPDATE sessions SET tasks_verified = tasks_verified + 1 WHERE id = ?",
+		sessionID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("session %q not found", sessionID)
+	}
+	return nil
 }

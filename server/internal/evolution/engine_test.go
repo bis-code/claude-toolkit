@@ -2,6 +2,7 @@ package evolution
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,3 +262,90 @@ func TestPatternTracker_DeduplicatesProjects(t *testing.T) {
 		t.Errorf("expected 2 unique projects, got %d: %v", len(tracker.projects), tracker.projects)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Verification failure pattern tests (US-026)
+// ---------------------------------------------------------------------------
+
+func TestDetectPatterns_VerificationFailure(t *testing.T) {
+	store := newStore(t)
+	engine := NewEngine(store)
+
+	// 2 sessions each with a verification failure for the same reason → pattern detected.
+	for i := 1; i <= 2; i++ {
+		sid := fmt.Sprintf("sess-vf-%d", i)
+		mustCreateSession(t, store, sid, fmt.Sprintf("proj-%d", i))
+		mustCreateEvent(t, store, fmt.Sprintf("evt-vf-%d", i), sid, "verification", "failed", "missing test coverage for auth module")
+	}
+
+	patterns, err := engine.DetectPatterns("", 20)
+	if err != nil {
+		t.Fatalf("DetectPatterns: %v", err)
+	}
+
+	found := false
+	for _, p := range patterns {
+		if p.Type == "verification_failure" && p.Details == "missing test coverage for auth module" {
+			found = true
+			if p.Frequency != 2 {
+				t.Errorf("expected frequency 2, got %d", p.Frequency)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected verification_failure pattern not found; patterns: %+v", patterns)
+	}
+}
+
+func TestDetectPatterns_VerificationFailureBelowThreshold(t *testing.T) {
+	store := newStore(t)
+	engine := NewEngine(store)
+
+	// Only 1 verification failure — below the threshold of 2.
+	mustCreateSession(t, store, "sess-vf-single", "proj-a")
+	mustCreateEvent(t, store, "evt-vf-single", "sess-vf-single", "verification", "failed", "lint errors in handler")
+
+	patterns, err := engine.DetectPatterns("", 20)
+	if err != nil {
+		t.Fatalf("DetectPatterns: %v", err)
+	}
+
+	for _, p := range patterns {
+		if p.Type == "verification_failure" && p.Details == "lint errors in handler" {
+			t.Errorf("pattern should not be reported below threshold (frequency=%d)", p.Frequency)
+		}
+	}
+}
+
+func TestProposeRule_VerificationFailure(t *testing.T) {
+	store := newStore(t)
+	engine := NewEngine(store)
+
+	p := Pattern{
+		Type:      "verification_failure",
+		Details:   "missing test coverage for auth module",
+		Frequency: 3,
+		Projects:  []string{"proj-a", "proj-b"},
+	}
+
+	imp := engine.ProposeRule(p)
+	if imp == nil {
+		t.Fatal("expected non-nil improvement for verification_failure pattern")
+	}
+	if imp.Scope != "global" {
+		t.Errorf("expected scope=global (2 projects), got %q", imp.Scope)
+	}
+	// Content should mention the reason and the verification failure context.
+	if imp.Content == "" {
+		t.Error("expected non-empty content")
+	}
+	// The content should contain "verification" keyword.
+	if !strings.Contains(imp.Content, "verification") && !strings.Contains(imp.Content, "Verification") {
+		t.Errorf("content should mention 'verification', got: %q", imp.Content)
+	}
+	// The reason should appear in the content.
+	if !strings.Contains(imp.Content, "missing test coverage for auth module") {
+		t.Errorf("content should include the failure reason, got: %q", imp.Content)
+	}
+}
+

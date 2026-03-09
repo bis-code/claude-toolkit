@@ -521,3 +521,75 @@ func TestDashboard_APIAudit_ReturnsRulesWithScores(t *testing.T) {
 		t.Error("/api/audit: rule r-audit-1 not found in response")
 	}
 }
+
+// TestDashboard_APIStats_IncludesVerification verifies /api/stats includes verification data.
+func TestDashboard_APIStats_IncludesVerification(t *testing.T) {
+	ts := newTestServer(t, func(s *db.Store) {
+		_ = s.CreateSession(&db.Session{ID: "sess-vd-1", Project: "p", StartedAt: time.Now()})
+		_ = s.CreateEvent(&db.Event{
+			ID: "ev-vd-1", SessionID: "sess-vd-1",
+			Type: "verification", Result: "verified", Timestamp: time.Now(),
+		})
+		_ = s.CreateEvent(&db.Event{
+			ID: "ev-vd-2", SessionID: "sess-vd-1",
+			Type: "verification", Result: "verified", Timestamp: time.Now(),
+		})
+		_ = s.CreateEvent(&db.Event{
+			ID: "ev-vd-3", SessionID: "sess-vd-1",
+			Type: "verification", Result: "failed", Details: "lint errors", Timestamp: time.Now(),
+		})
+	})
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/stats")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/stats: want 200, got %d", resp.StatusCode)
+	}
+
+	var payload map[string]interface{}
+	decodeJSON(t, resp, &payload)
+
+	verification, ok := payload["verification"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("/api/stats verification: expected object, got %T", payload["verification"])
+	}
+
+	verified := int(verification["verified"].(float64))
+	if verified != 2 {
+		t.Errorf("/api/stats verification.verified: want 2, got %d", verified)
+	}
+
+	failed := int(verification["failed"].(float64))
+	if failed != 1 {
+		t.Errorf("/api/stats verification.failed: want 1, got %d", failed)
+	}
+
+	rate, ok := verification["rate"].(float64)
+	if !ok {
+		t.Fatal("/api/stats verification.rate: expected float64")
+	}
+	// 2 verified out of 3 total = 0.666...
+	if rate < 0.66 || rate > 0.67 {
+		t.Errorf("/api/stats verification.rate: want ~0.667, got %f", rate)
+	}
+}
+
+// TestDashboard_APIStats_VerificationDivByZero verifies verification rate is 0 when no verifications.
+func TestDashboard_APIStats_VerificationDivByZero(t *testing.T) {
+	ts := newTestServer(t, nil) // no data
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/stats")
+	var payload map[string]interface{}
+	decodeJSON(t, resp, &payload)
+
+	verification, ok := payload["verification"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("/api/stats verification: expected object, got %T", payload["verification"])
+	}
+
+	rate := verification["rate"].(float64)
+	if rate != 0 {
+		t.Errorf("/api/stats verification.rate with no data: want 0, got %f", rate)
+	}
+}

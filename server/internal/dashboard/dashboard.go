@@ -162,6 +162,30 @@ func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	// Count verification events across all sessions.
+	var verifiedCount, failedCount int
+	for _, sess := range sessions {
+		events, err := s.store.ListEvents(sess.ID)
+		if err != nil {
+			continue // best-effort: skip sessions we cannot load events for
+		}
+		for _, e := range events {
+			if e.Type == "verification" {
+				if e.Result == "verified" {
+					verifiedCount++
+				} else if e.Result == "failed" {
+					failedCount++
+				}
+			}
+		}
+	}
+
+	verificationRate := 0.0
+	total := verifiedCount + failedCount
+	if total > 0 {
+		verificationRate = float64(verifiedCount) / float64(total)
+	}
+
 	writeJSON(w, map[string]interface{}{
 		"total_rules":      len(rules),
 		"total_sessions":   len(sessions),
@@ -170,6 +194,11 @@ func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 			"pending":  pending,
 			"applied":  applied,
 			"rejected": rejected,
+		},
+		"verification": map[string]interface{}{
+			"verified": verifiedCount,
+			"failed":   failedCount,
+			"rate":     verificationRate,
 		},
 	})
 }

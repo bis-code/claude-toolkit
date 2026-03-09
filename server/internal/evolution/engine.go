@@ -69,6 +69,7 @@ func (e *Engine) DetectPatterns(project string, sessionLimit int) ([]Pattern, er
 
 	failureCounts := map[string]*patternTracker{}
 	stuckCounts := map[string]*patternTracker{}
+	verificationFailureCounts := map[string]*patternTracker{}
 
 	for _, session := range sessions {
 		events, err := e.store.ListEvents(session.ID)
@@ -94,6 +95,15 @@ func (e *Engine) DetectPatterns(project string, sessionLimit int) ([]Pattern, er
 				stuckCounts[key].count++
 				stuckCounts[key].addProject(session.Project)
 			}
+
+			if event.Type == "verification" && event.Result == "failed" && event.Details != "" {
+				key := event.Details
+				if _, ok := verificationFailureCounts[key]; !ok {
+					verificationFailureCounts[key] = &patternTracker{}
+				}
+				verificationFailureCounts[key].count++
+				verificationFailureCounts[key].addProject(session.Project)
+			}
 		}
 	}
 
@@ -114,6 +124,17 @@ func (e *Engine) DetectPatterns(project string, sessionLimit int) ([]Pattern, er
 		if tracker.count >= 2 {
 			patterns = append(patterns, Pattern{
 				Type:      "recurring_stuck",
+				Details:   details,
+				Frequency: tracker.count,
+				Projects:  tracker.projects,
+			})
+		}
+	}
+
+	for details, tracker := range verificationFailureCounts {
+		if tracker.count >= 2 {
+			patterns = append(patterns, Pattern{
+				Type:      "verification_failure",
 				Details:   details,
 				Frequency: tracker.count,
 				Projects:  tracker.projects,
@@ -164,6 +185,8 @@ func generateRuleContent(p Pattern) string {
 		return fmt.Sprintf("Avoid: %s — this has failed %d times. Consider an alternative approach.", p.Details, p.Frequency)
 	case "recurring_stuck":
 		return fmt.Sprintf("Watch out for: %s — this has caused stuck states %d times. Plan a workaround before starting.", p.Details, p.Frequency)
+	case "verification_failure":
+		return fmt.Sprintf("Verification check: %s. This verification has failed %d times across %d project(s). Add explicit verification step after changes.", p.Details, p.Frequency, len(p.Projects))
 	default:
 		return fmt.Sprintf("Pattern detected: %s (seen %d times)", p.Details, p.Frequency)
 	}

@@ -327,7 +327,7 @@ func TestEndSession(t *testing.T) {
 	}
 	store.CreateSession(session)
 
-	err := store.EndSession("sess-end-001", "Did great work", 0.95, 5, 1)
+	err := store.EndSession("sess-end-001", "Did great work", 0.95, 5, 1, 0)
 	if err != nil {
 		t.Fatalf("EndSession failed: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestEndSession(t *testing.T) {
 func TestEndSession_NotFound(t *testing.T) {
 	store := setupStore(t)
 
-	err := store.EndSession("nonexistent", "summary", 0.5, 1, 0)
+	err := store.EndSession("nonexistent", "summary", 0.5, 1, 0, 0)
 	if err == nil {
 		t.Error("expected error for nonexistent session, got nil")
 	}
@@ -743,5 +743,74 @@ func TestDeprecateLowScoreRules(t *testing.T) {
 	fewRule, _ := store.GetRule("few-scores-rule")
 	if fewRule.Deprecated {
 		t.Error("few-scores-rule should NOT be deprecated (insufficient scores)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// tasks_verified tests (US-026)
+// ---------------------------------------------------------------------------
+
+func TestEndSession_WithTasksVerified(t *testing.T) {
+	store := setupStore(t)
+
+	session := &db.Session{
+		ID:        "sess-verified-001",
+		Project:   "my-project",
+		StartedAt: time.Now().UTC(),
+	}
+	store.CreateSession(session)
+
+	err := store.EndSession("sess-verified-001", "All verified", 0.99, 5, 0, 3)
+	if err != nil {
+		t.Fatalf("EndSession failed: %v", err)
+	}
+
+	got, err := store.GetSession("sess-verified-001")
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+
+	if got.TasksVerified != 3 {
+		t.Errorf("tasks_verified = %d, want 3", got.TasksVerified)
+	}
+}
+
+func TestIncrementTasksVerified(t *testing.T) {
+	store := setupStore(t)
+
+	session := &db.Session{
+		ID:        "sess-incr-001",
+		Project:   "my-project",
+		StartedAt: time.Now().UTC(),
+	}
+	store.CreateSession(session)
+
+	// Counter goes 0 → 1
+	if err := store.IncrementTasksVerified("sess-incr-001"); err != nil {
+		t.Fatalf("IncrementTasksVerified (1st): %v", err)
+	}
+
+	got, _ := store.GetSession("sess-incr-001")
+	if got.TasksVerified != 1 {
+		t.Errorf("tasks_verified after 1st increment = %d, want 1", got.TasksVerified)
+	}
+
+	// Counter goes 1 → 2
+	if err := store.IncrementTasksVerified("sess-incr-001"); err != nil {
+		t.Fatalf("IncrementTasksVerified (2nd): %v", err)
+	}
+
+	got2, _ := store.GetSession("sess-incr-001")
+	if got2.TasksVerified != 2 {
+		t.Errorf("tasks_verified after 2nd increment = %d, want 2", got2.TasksVerified)
+	}
+}
+
+func TestIncrementTasksVerified_NotFound(t *testing.T) {
+	store := setupStore(t)
+
+	err := store.IncrementTasksVerified("nonexistent-session")
+	if err == nil {
+		t.Error("expected error for nonexistent session, got nil")
 	}
 }
