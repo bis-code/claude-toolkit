@@ -9,6 +9,8 @@
   <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" defer></script>
   <!-- Alpine.js — lightweight reactivity for UI state -->
   <script src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js" defer></script>
+  <!-- Chart.js — bar/doughnut charts for overview -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body x-data="app()" x-init="loadStats()">
 
@@ -26,13 +28,21 @@
        @click.prevent="navigate('rules')" href="#">
       <span class="nav-item__icon">⊞</span> Rules
     </a>
-    <a class="nav-item" :class="{ active: page === 'sessions' }"
-       @click.prevent="navigate('sessions')" href="#">
-      <span class="nav-item__icon">◷</span> Sessions
+    <a class="nav-item" :class="{ active: page === 'telemetry' }"
+       @click.prevent="navigate('telemetry')" href="#">
+      <span class="nav-item__icon">◷</span> Telemetry
+    </a>
+    <a class="nav-item" :class="{ active: page === 'patrol' }"
+       @click.prevent="navigate('patrol')" href="#">
+      <span class="nav-item__icon">⚠</span> Patrol
     </a>
     <a class="nav-item" :class="{ active: page === 'improvements' }"
        @click.prevent="navigate('improvements')" href="#">
       <span class="nav-item__icon">↑</span> Improvements
+    </a>
+    <a class="nav-item" :class="{ active: page === 'audit' }"
+       @click.prevent="navigate('audit')" href="#">
+      <span class="nav-item__icon">✓</span> Audit
     </a>
   </nav>
 
@@ -78,7 +88,15 @@
           </div>
         </div>
 
-        <p class="text-muted" style="font-size:12px;">
+        <!-- Chart: rules by scope -->
+        <div class="chart-wrap" x-show="overviewChartReady">
+          <div class="table-header">
+            <span class="table-header__title">Rules by Scope</span>
+          </div>
+          <canvas id="scopeChart" height="120"></canvas>
+        </div>
+
+        <p class="text-muted" style="font-size:12px;margin-top:12px;">
           Stats refresh on each page load. Navigate to a section for full detail.
         </p>
       </div>
@@ -150,10 +168,10 @@
       </div>
     </template>
 
-    <!-- Sessions page -->
-    <template x-if="page === 'sessions'">
+    <!-- Telemetry page -->
+    <template x-if="page === 'telemetry'">
       <div>
-        <h1 class="page-title">Sessions</h1>
+        <h1 class="page-title">Telemetry</h1>
 
         <div class="filters">
           <input class="filter-input" type="text" placeholder="Filter by project…"
@@ -181,12 +199,15 @@
                 <th>Ended</th>
                 <th>Tasks ✓/✗</th>
                 <th>Confidence</th>
+                <th>Events</th>
               </tr>
             </thead>
             <tbody>
               <template x-if="sessionsData.sessions && sessionsData.sessions.length > 0">
                 <template x-for="sess in sessionsData.sessions" :key="sess.id">
-                  <tr>
+                  <tr class="clickable-row"
+                      :class="{ 'row-selected': selectedSession === sess.id }"
+                      @click="selectSession(sess.id)">
                     <td class="text-mono" x-text="sess.id.substring(0,8) + '…'"></td>
                     <td x-text="sess.project"></td>
                     <td class="text-muted" x-text="formatDate(sess.started_at)"></td>
@@ -196,15 +217,112 @@
                       <span class="badge badge--error" x-text="sess.tasks_failed"></span>
                     </td>
                     <td x-text="Math.round((sess.confidence||0) * 100) + '%'"></td>
+                    <td>
+                      <button class="btn-sm" @click.stop="loadEvents(sess.id)">View</button>
+                    </td>
                   </tr>
                 </template>
               </template>
               <template x-if="!sessionsData.sessions || sessionsData.sessions.length === 0">
-                <tr><td colspan="6" class="empty-state">No sessions found.</td></tr>
+                <tr><td colspan="7" class="empty-state">No sessions found.</td></tr>
               </template>
             </tbody>
           </table>
         </div>
+
+        <!-- Events panel -->
+        <template x-if="selectedSession">
+          <div class="table-wrap" style="margin-top:16px;">
+            <div class="table-header">
+              <span class="table-header__title">Events for <span class="text-mono" x-text="selectedSession.substring(0,8) + '…'"></span></span>
+              <span class="text-muted" x-text="eventsData.count + ' events'"></span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Type</th>
+                  <th>Result</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-if="eventsData.events && eventsData.events.length > 0">
+                  <template x-for="ev in eventsData.events" :key="ev.id">
+                    <tr>
+                      <td class="text-muted" x-text="formatDate(ev.timestamp)"></td>
+                      <td><span class="badge badge--global" x-text="ev.type"></span></td>
+                      <td>
+                        <span class="badge"
+                              :class="ev.result === 'success' ? 'badge--success' : ev.result === 'failure' ? 'badge--error' : 'badge--global'"
+                              x-text="ev.result || '—'"></span>
+                      </td>
+                      <td class="text-mono text-muted" x-text="ev.details || '—'"></td>
+                    </tr>
+                  </template>
+                </template>
+                <template x-if="!eventsData.events || eventsData.events.length === 0">
+                  <tr><td colspan="4" class="empty-state">No events for this session.</td></tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </template>
+
+      </div>
+    </template>
+
+    <!-- Patrol page -->
+    <template x-if="page === 'patrol'">
+      <div>
+        <h1 class="page-title">Patrol</h1>
+
+        <div class="filters">
+          <select class="filter-input" x-model="patrolSessionID" @change="loadPatrol()">
+            <option value="">Select a session…</option>
+            <template x-for="sess in sessionsData.sessions" :key="sess.id">
+              <option :value="sess.id" x-text="sess.id.substring(0,12) + ' — ' + sess.project"></option>
+            </template>
+          </select>
+          <button class="btn-sm" @click="loadPatrol()" :disabled="!patrolSessionID">Analyze</button>
+        </div>
+
+        <template x-if="patrolData && patrolData.alerts">
+          <div>
+            <div class="table-header" style="margin-top:16px;">
+              <span class="table-header__title">Alerts</span>
+              <span class="text-muted" x-text="patrolData.count + ' detected'"></span>
+            </div>
+
+            <template x-if="patrolData.alerts.length === 0">
+              <div class="empty-state" style="margin-top:8px;">No anti-patterns detected for this session.</div>
+            </template>
+
+            <template x-if="patrolData.alerts.length > 0">
+              <div>
+                <template x-for="(alert, idx) in patrolData.alerts" :key="idx">
+                  <div class="alert-card" :class="'alert-card--' + alert.severity">
+                    <div class="alert-card__header">
+                      <span class="badge"
+                            :class="alert.severity === 'critical' ? 'badge--error' : 'badge--warning'"
+                            x-text="alert.severity"></span>
+                      <span class="alert-card__pattern" x-text="alert.pattern"></span>
+                      <span class="text-muted" x-text="'(' + alert.event_count + ' events)'"></span>
+                    </div>
+                    <div class="alert-card__message" x-text="alert.message"></div>
+                    <div class="alert-card__suggestion">
+                      <strong>Suggestion:</strong> <span x-text="alert.suggestion"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <template x-if="!patrolData">
+          <div class="empty-state" style="margin-top:16px;">Select a session and click Analyze to detect anti-patterns.</div>
+        </template>
       </div>
     </template>
 
@@ -263,6 +381,68 @@
       </div>
     </template>
 
+    <!-- Audit page -->
+    <template x-if="page === 'audit'">
+      <div>
+        <h1 class="page-title">Audit</h1>
+
+        <div class="filters">
+          <select class="filter-input" x-model="auditSort" @change="sortAudit()">
+            <option value="effectiveness_desc">Effectiveness (high first)</option>
+            <option value="effectiveness_asc">Effectiveness (low first)</option>
+            <option value="scores_desc">Score count (high first)</option>
+            <option value="scores_asc">Score count (low first)</option>
+          </select>
+        </div>
+
+        <div class="table-wrap">
+          <div class="table-header">
+            <span class="table-header__title">Rule Effectiveness Audit</span>
+            <span class="text-muted" x-text="auditData.count + ' rules'"></span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th @click="auditSort='effectiveness_desc';sortAudit()" style="cursor:pointer">Effectiveness</th>
+                <th>Scope</th>
+                <th>Content</th>
+                <th @click="auditSort='scores_desc';sortAudit()" style="cursor:pointer">Score Count</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-if="auditRulesSorted && auditRulesSorted.length > 0">
+                <template x-for="rule in auditRulesSorted" :key="rule.id">
+                  <tr>
+                    <td>
+                      <div class="eff-bar">
+                        <div class="eff-bar__track">
+                          <div class="eff-bar__fill"
+                               :class="effectivenessClass(rule.effectiveness)"
+                               :style="'width:' + Math.round((rule.effectiveness||0) * 100) + '%'">
+                          </div>
+                        </div>
+                        <span x-text="Math.round((rule.effectiveness||0) * 100) + '%'"></span>
+                      </div>
+                    </td>
+                    <td>
+                      <span class="badge" :class="'badge--' + rule.scope" x-text="rule.scope"></span>
+                    </td>
+                    <td class="text-mono" x-text="rule.content"></td>
+                    <td class="text-muted" x-text="rule.score_count"></td>
+                    <td class="text-muted" x-text="formatDate(rule.updated_at)"></td>
+                  </tr>
+                </template>
+              </template>
+              <template x-if="!auditRulesSorted || auditRulesSorted.length === 0">
+                <tr><td colspan="5" class="empty-state">No rules to audit.</td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+
   </main>
 </div>
 
@@ -273,7 +453,16 @@ function app() {
     stats: {},
     rulesData: { rules: [], count: 0 },
     sessionsData: { sessions: [], count: 0 },
+    eventsData: { events: [], count: 0 },
     improvementsData: { improvements: [], count: 0 },
+    auditData: { rules: [], count: 0 },
+    auditRulesSorted: [],
+    auditSort: 'effectiveness_desc',
+    patrolData: null,
+    patrolSessionID: '',
+    selectedSession: null,
+    overviewChartReady: false,
+    scopeChartInstance: null,
     filters: {
       rules: { scope: '', project: '' },
       sessions: { project: '', limit: '20' },
@@ -282,25 +471,73 @@ function app() {
 
     pageTitle() {
       const titles = {
-        overview: 'Overview',
-        rules: 'Rules',
-        sessions: 'Sessions',
+        overview:     'Overview',
+        rules:        'Rules',
+        telemetry:    'Telemetry',
+        patrol:       'Patrol',
         improvements: 'Improvements',
+        audit:        'Audit',
       };
       return titles[this.page] || 'Dashboard';
     },
 
     navigate(p) {
       this.page = p;
-      if (p === 'overview') this.loadStats();
-      if (p === 'rules') this.loadRules();
-      if (p === 'sessions') this.loadSessions();
+      if (p === 'overview')     this.loadStats();
+      if (p === 'rules')        this.loadRules();
+      if (p === 'telemetry')    this.loadSessions();
+      if (p === 'patrol')       this.loadSessions();
       if (p === 'improvements') this.loadImprovements();
+      if (p === 'audit')        this.loadAudit();
     },
 
     async loadStats() {
       const r = await fetch('/api/stats');
       this.stats = await r.json();
+      // Also load rules for the scope chart
+      const rr = await fetch('/api/rules');
+      const rd = await rr.json();
+      this.$nextTick(() => this.renderScopeChart(rd.rules || []));
+    },
+
+    renderScopeChart(rules) {
+      const counts = { global: 0, workspace: 0, project: 0, task: 0 };
+      for (const r of rules) {
+        if (counts[r.scope] !== undefined) counts[r.scope]++;
+      }
+
+      const canvas = document.getElementById('scopeChart');
+      if (!canvas) return;
+
+      if (this.scopeChartInstance) {
+        this.scopeChartInstance.destroy();
+      }
+
+      this.overviewChartReady = true;
+      this.$nextTick(() => {
+        const ctx = document.getElementById('scopeChart');
+        if (!ctx) return;
+        this.scopeChartInstance = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['global', 'workspace', 'project', 'task'],
+            datasets: [{
+              label: 'Rules',
+              data: [counts.global, counts.workspace, counts.project, counts.task],
+              backgroundColor: ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd'],
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+              y: { ticks: { color: '#94a3b8', stepSize: 1 }, grid: { color: '#334155' }, beginAtZero: true },
+            },
+          },
+        });
+      });
     },
 
     async loadRules() {
@@ -319,11 +556,57 @@ function app() {
       this.sessionsData = await r.json();
     },
 
+    async loadEvents(sessionID) {
+      this.selectedSession = sessionID;
+      const r = await fetch('/api/events?session_id=' + encodeURIComponent(sessionID));
+      this.eventsData = await r.json();
+    },
+
+    selectSession(sessionID) {
+      if (this.selectedSession === sessionID) {
+        this.selectedSession = null;
+        this.eventsData = { events: [], count: 0 };
+      } else {
+        this.loadEvents(sessionID);
+      }
+    },
+
+    async loadPatrol() {
+      if (!this.patrolSessionID) return;
+      const r = await fetch('/api/patrol?session_id=' + encodeURIComponent(this.patrolSessionID));
+      this.patrolData = await r.json();
+    },
+
     async loadImprovements() {
       const params = new URLSearchParams();
       if (this.filters.improvements.status) params.set('status', this.filters.improvements.status);
       const r = await fetch('/api/improvements?' + params);
       this.improvementsData = await r.json();
+    },
+
+    async loadAudit() {
+      const r = await fetch('/api/audit');
+      this.auditData = await r.json();
+      this.auditRulesSorted = [...(this.auditData.rules || [])];
+      this.sortAudit();
+    },
+
+    sortAudit() {
+      const rules = [...(this.auditData.rules || [])];
+      switch (this.auditSort) {
+        case 'effectiveness_desc': rules.sort((a, b) => (b.effectiveness||0) - (a.effectiveness||0)); break;
+        case 'effectiveness_asc':  rules.sort((a, b) => (a.effectiveness||0) - (b.effectiveness||0)); break;
+        case 'scores_desc':        rules.sort((a, b) => (b.score_count||0)   - (a.score_count||0));   break;
+        case 'scores_asc':         rules.sort((a, b) => (a.score_count||0)   - (b.score_count||0));   break;
+      }
+      this.auditRulesSorted = rules;
+    },
+
+    effectivenessClass(v) {
+      const pct = (v || 0) * 100;
+      if (pct >= 70) return 'eff-bar__fill--high';
+      if (pct >= 40) return 'eff-bar__fill--mid';
+      return 'eff-bar__fill--low';
     },
 
     formatDate(iso) {

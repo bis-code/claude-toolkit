@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/bis-code/claude-toolkit/server/internal/db"
+	"github.com/bis-code/claude-toolkit/server/internal/patrol"
 )
 
 //go:embed static/*
@@ -15,13 +16,14 @@ var staticFiles embed.FS
 
 // Server is the dashboard HTTP server.
 type Server struct {
-	store *db.Store
-	mux   *http.ServeMux
+	store    *db.Store
+	detector *patrol.Detector
+	mux      *http.ServeMux
 }
 
-// NewServer creates a new dashboard server backed by the given store.
-func NewServer(store *db.Store) *Server {
-	s := &Server{store: store}
+// NewServer creates a new dashboard server backed by the given store and patrol detector.
+func NewServer(store *db.Store, detector *patrol.Detector) *Server {
+	s := &Server{store: store, detector: detector}
 	s.mux = http.NewServeMux()
 	s.registerRoutes()
 	return s
@@ -50,6 +52,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/improvements", s.handleImprovements)
 	s.mux.HandleFunc("/api/stats", s.handleStats)
+	s.mux.HandleFunc("/api/patrol", s.handlePatrol)
+	s.mux.HandleFunc("/api/audit", s.handleAudit)
 }
 
 // handleHealth returns a simple liveness probe response.
@@ -167,6 +171,69 @@ func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 			"applied":  applied,
 			"rejected": rejected,
 		},
+	})
+}
+
+// handlePatrol loads events for a session and runs the patrol detector.
+// Query param: session_id (required).
+func (s *Server) handlePatrol(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+
+	events, err := s.store.ListEvents(sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	alerts := s.detector.Analyze(events)
+
+	// Always return an array, never null.
+	if alerts == nil {
+		alerts = []patrol.Alert{}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"session_id": sessionID,
+		"alerts":     alerts,
+		"count":      len(alerts),
+	})
+}
+
+// auditRule is a Rule enriched with the number of scores it has received.
+type auditRule struct {
+	db.Rule
+	ScoreCount int `json:"score_count"`
+}
+
+// handleAudit returns all non-deprecated rules enriched with their score counts.
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	rules, err := s.store.ListRules("", "", "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	scoreCounts, err := s.store.CountScoresPerRule()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	enriched := make([]auditRule, len(rules))
+	for i, rule := range rules {
+		enriched[i] = auditRule{
+			Rule:       rule,
+			ScoreCount: scoreCounts[rule.ID],
+		}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"rules": enriched,
+		"count": len(enriched),
 	})
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/bis-code/claude-toolkit/server/internal/dashboard"
 	"github.com/bis-code/claude-toolkit/server/internal/db"
+	"github.com/bis-code/claude-toolkit/server/internal/patrol"
 )
 
 // newTestServer creates a dashboard server backed by an in-memory store.
@@ -25,7 +26,8 @@ func newTestServer(t *testing.T, seed func(*db.Store)) *httptest.Server {
 		seed(store)
 	}
 
-	srv := dashboard.NewServer(store)
+	detector := patrol.NewDetector(patrol.DefaultThresholds())
+	srv := dashboard.NewServer(store, detector)
 	return httptest.NewServer(srv.Handler())
 }
 
@@ -399,6 +401,8 @@ func TestDashboard_ContentTypeJSON(t *testing.T) {
 		"/api/stats",
 		"/api/health",
 		"/api/events?session_id=s1",
+		"/api/patrol?session_id=s1",
+		"/api/audit",
 	}
 
 	for _, path := range paths {
@@ -408,5 +412,112 @@ func TestDashboard_ContentTypeJSON(t *testing.T) {
 			t.Errorf("GET %s: want Content-Type application/json, got %q", path, ct)
 		}
 		resp.Body.Close()
+	}
+}
+
+// TestDashboard_APIPatrol_RequiresSessionID verifies that GET /api/patrol
+// without a session_id query param returns HTTP 400.
+func TestDashboard_APIPatrol_RequiresSessionID(t *testing.T) {
+	ts := newTestServer(t, nil)
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/patrol")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("GET /api/patrol (no session_id): want 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestDashboard_APIPatrol_ReturnsAlerts verifies that a session with repeated
+// failure events triggers patrol alerts.
+func TestDashboard_APIPatrol_ReturnsAlerts(t *testing.T) {
+	ts := newTestServer(t, func(s *db.Store) {
+		_ = s.CreateSession(&db.Session{
+			ID:        "sess-patrol",
+			Project:   "proj",
+			StartedAt: time.Now(),
+		})
+		// Create enough consecutive failures to trigger the retry_loop detector
+		// (default threshold is 3 consecutive same-detail failures).
+		for i := 0; i < 4; i++ {
+			_ = s.CreateEvent(&db.Event{
+				ID:        "ev-patrol-" + string(rune('a'+i)),
+				SessionID: "sess-patrol",
+				Type:      "tool_call",
+				Result:    "failure",
+				Details:   "go build ./...",
+				Timestamp: time.Now(),
+			})
+		}
+	})
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/patrol?session_id=sess-patrol")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/patrol?session_id=sess-patrol: want 200, got %d", resp.StatusCode)
+	}
+
+	var payload map[string]interface{}
+	decodeJSON(t, resp, &payload)
+
+	alerts, ok := payload["alerts"].([]interface{})
+	if !ok {
+		t.Fatalf("/api/patrol: 'alerts' missing or not an array, got %T", payload["alerts"])
+	}
+
+	if len(alerts) == 0 {
+		t.Error("/api/patrol: expected at least one alert for 4 consecutive failures, got 0")
+	}
+}
+
+// TestDashboard_APIAudit_ReturnsRulesWithScores verifies that /api/audit returns
+// rules enriched with their score_count from the rule_scores table.
+func TestDashboard_APIAudit_ReturnsRulesWithScores(t *testing.T) {
+	ts := newTestServer(t, func(s *db.Store) {
+		_ = s.CreateRule(&db.Rule{ID: "r-audit-1", Content: "TDD always", Scope: "global"})
+		_ = s.CreateRule(&db.Rule{ID: "r-audit-2", Content: "Small commits", Scope: "global"})
+
+		// Record two scores for r-audit-1, none for r-audit-2.
+		_ = s.RecordScore("r-audit-1", true, "ctx", "sess-x")
+		_ = s.RecordScore("r-audit-1", false, "ctx", "sess-y")
+	})
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/audit")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/audit: want 200, got %d", resp.StatusCode)
+	}
+
+	var payload map[string]interface{}
+	decodeJSON(t, resp, &payload)
+
+	rules, ok := payload["rules"].([]interface{})
+	if !ok {
+		t.Fatalf("/api/audit: 'rules' missing or not an array, got %T", payload["rules"])
+	}
+
+	if len(rules) != 2 {
+		t.Errorf("/api/audit: want 2 rules, got %d", len(rules))
+	}
+
+	// Find r-audit-1 and verify score_count == 2.
+	var found bool
+	for _, raw := range rules {
+		r, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if r["id"] == "r-audit-1" {
+			found = true
+			scoreCount, ok := r["score_count"].(float64)
+			if !ok {
+				t.Fatalf("/api/audit rule r-audit-1: 'score_count' missing or wrong type, got %T", r["score_count"])
+			}
+			if int(scoreCount) != 2 {
+				t.Errorf("/api/audit rule r-audit-1: want score_count=2, got %d", int(scoreCount))
+			}
+		}
+	}
+	if !found {
+		t.Error("/api/audit: rule r-audit-1 not found in response")
 	}
 }
