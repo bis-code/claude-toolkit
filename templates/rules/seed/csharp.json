@@ -1,0 +1,46 @@
+{
+  "rules": [
+    {
+      "id": "seed-cs-001",
+      "content": "Use [SerializeField] to expose private fields to the Unity Inspector rather than making fields public. This preserves encapsulation while allowing designer configuration without a custom Editor.",
+      "scope": "global",
+      "tags": {"tech_stack": ["csharp", "unity"], "domain": ["design"]},
+      "source_evidence": "Public fields expose state to all code, not just the Inspector. [SerializeField] on private fields enforces that Inspector configuration is the only external entry point, preventing accidental modification from other scripts."
+    },
+    {
+      "id": "seed-cs-002",
+      "content": "Guard all Editor-only code (EditorPrefs, AssetDatabase, EditorApplication, EditorGUILayout) with '#if UNITY_EDITOR' or place it in an Editor assembly definition. Editor code must never be included in builds.",
+      "scope": "global",
+      "tags": {"tech_stack": ["csharp", "unity"], "domain": ["tooling", "build"]},
+      "source_evidence": "Editor APIs are not available at runtime. Including them in non-Editor code causes build failures or runtime exceptions on target platforms. Assembly definitions with Editor scope are the clean solution."
+    },
+    {
+      "id": "seed-cs-003",
+      "content": "Use UniTask for async operations in Unity rather than System.Threading.Tasks or coroutines for complex flows. UniTask integrates with Unity's player loop, runs on the main thread by default, and avoids the overhead of SynchronizationContext.",
+      "scope": "global",
+      "tags": {"tech_stack": ["csharp", "unity"], "domain": ["async", "performance"]},
+      "source_evidence": "Standard Task-based async/await allocates garbage and can resume on thread pool threads, which breaks Unity API calls that must run on the main thread. UniTask is allocation-free and Unity-aware."
+    },
+    {
+      "id": "seed-cs-004",
+      "content": "Never call GameObject.Find, FindObjectOfType, or GetComponent in Update, FixedUpdate, or any per-frame method. Cache all component references in Awake() or Start() and store them in private fields.",
+      "scope": "global",
+      "tags": {"tech_stack": ["csharp", "unity"], "domain": ["performance"]},
+      "source_evidence": "Find and GetComponent iterate over the scene hierarchy or component list every call. In Update(), called 60+ times per second, this produces visible frame rate drops. Caching is a one-time cost."
+    },
+    {
+      "id": "seed-cs-005",
+      "content": "Store shared configuration data (balancing values, item definitions, ability configs) in ScriptableObject assets rather than MonoBehaviour fields or static constants. Never store runtime state in ScriptableObjects — they persist changes across play sessions in the Editor.",
+      "scope": "global",
+      "tags": {"tech_stack": ["csharp", "unity"], "domain": ["design"]},
+      "source_evidence": "ScriptableObjects are editable assets that designers can tune without touching code, support version control diffs cleanly, and can be swapped without scene changes. They decouple configuration from behavior."
+    },
+    {
+      "id": "seed-cs-006",
+      "content": "Pool frequently instantiated and destroyed objects (projectiles, particle systems, enemies, UI elements) using Unity's ObjectPool<T> (Unity 2021+). Pre-warm pools at scene start, not during gameplay. Reset object state on return, not on retrieval.",
+      "scope": "global",
+      "tags": {"tech_stack": ["csharp", "unity"], "domain": ["performance"]},
+      "source_evidence": "Instantiate and Destroy are expensive: they allocate memory, trigger garbage collection, and produce GC spikes that cause frame drops. Object pooling amortizes this cost and is essential for objects spawned at high frequency."
+    }
+  ]
+}

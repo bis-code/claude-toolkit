@@ -1,0 +1,60 @@
+{
+  "rules": [
+    {
+      "id": "seed-py-001",
+      "content": "Add type hints to all function signatures — parameters and return types. Enable mypy with 'strict = true' in pyproject.toml and run it in CI. Use 'X | None' syntax (Python 3.10+) over 'Optional[X]'.",
+      "scope": "global",
+      "tags": {"tech_stack": ["python"], "domain": ["type-safety", "tooling"]},
+      "source_evidence": "Type hints catch argument mismatches, missing return values, and None-dereference bugs at static analysis time. mypy strict mode prevents gradual type annotation drift where untyped functions bypass checking."
+    },
+    {
+      "id": "seed-py-002",
+      "content": "Always develop inside an isolated virtual environment (venv, uv, or poetry). Commit a lock file (poetry.lock, uv.lock, requirements.txt pinned) and separate dev dependencies from production dependencies.",
+      "scope": "global",
+      "tags": {"tech_stack": ["python"], "domain": ["tooling", "dependency-management"]},
+      "source_evidence": "Global package installs cause version conflicts across projects. Lock files ensure reproducible builds across developer machines and CI, preventing 'works on my machine' failures."
+    },
+    {
+      "id": "seed-py-003",
+      "content": "Use pytest for all tests — unit, integration, and end-to-end. Use pytest fixtures for setup/teardown. Avoid unittest.TestCase subclasses in new code; they add boilerplate without benefit.",
+      "scope": "global",
+      "tags": {"tech_stack": ["python"], "domain": ["testing"]},
+      "source_evidence": "pytest's fixture system, parametrize decorator, and plain assertion introspection produce more readable tests with significantly less boilerplate than unittest. The ecosystem of plugins (pytest-cov, pytest-mock, testcontainers) is also larger."
+    },
+    {
+      "id": "seed-py-004",
+      "content": "Use pathlib.Path for all file system operations instead of os.path. Prefer Path.read_text() and Path.write_text() for simple file I/O. pathlib is object-oriented, composable, and cross-platform by default.",
+      "scope": "global",
+      "tags": {"tech_stack": ["python"], "domain": ["code-quality"]},
+      "source_evidence": "os.path string concatenation is error-prone on Windows/POSIX boundary (separator differences). pathlib.Path uses the / operator for joining, is type-checkable, and integrates cleanly with modern Python APIs."
+    },
+    {
+      "id": "seed-py-005",
+      "content": "Use dataclasses for simple data containers and Pydantic BaseModel for data that requires validation, serialization, or comes from external sources (API requests, config files). Avoid plain dicts for structured data.",
+      "scope": "global",
+      "tags": {"tech_stack": ["python"], "domain": ["design", "type-safety"]},
+      "source_evidence": "Plain dicts have no type information, no field documentation, and no validation. dataclasses and Pydantic models give fields names and types, enable IDE autocomplete, and make invalid states visible at the schema level."
+    },
+    {
+      "id": "seed-py-006",
+      "content": "Use f-strings for all string interpolation. Do not use % formatting or .format() in new code. For multiline strings embedded in code, use textwrap.dedent to avoid indentation leaking into the string value.",
+      "scope": "global",
+      "tags": {"tech_stack": ["python"], "domain": ["code-quality"]},
+      "source_evidence": "f-strings are evaluated at definition time, have lower syntax overhead than .format(), and are readable inline. % formatting is legacy and does not support attribute access or complex expressions."
+    },
+    {
+      "id": "seed-py-007",
+      "content": "Use enumerate() when you need both an index and a value while iterating. Use zip() to iterate over two sequences in parallel. Never manually manage a counter variable alongside a for loop.",
+      "scope": "global",
+      "tags": {"tech_stack": ["python"], "domain": ["code-quality"]},
+      "source_evidence": "Manual index variables introduce off-by-one errors, require initialization outside the loop, and add noise. enumerate() and zip() are idiomatic Python that signal intent and cannot go out of sync."
+    },
+    {
+      "id": "seed-py-008",
+      "content": "Use context managers (the 'with' statement) for every resource that requires cleanup: file handles, database connections, locks, and HTTP sessions. Never rely on garbage collection to close resources.",
+      "scope": "global",
+      "tags": {"tech_stack": ["python"], "domain": ["resource-management"]},
+      "source_evidence": "Python's reference-counted GC is non-deterministic in CPython edge cases and absent in PyPy. Context managers guarantee __exit__ runs even when exceptions occur, preventing connection and file descriptor leaks."
+    }
+  ]
+}

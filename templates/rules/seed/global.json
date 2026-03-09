@@ -1,0 +1,74 @@
+{
+  "rules": [
+    {
+      "id": "seed-global-001",
+      "content": "Write a failing test before writing implementation code. Only write the minimum production code needed to make the test pass, then refactor. TDD is non-negotiable for features, bug fixes, and refactors alike.",
+      "scope": "global",
+      "tags": {"domain": ["testing", "workflow"]},
+      "source_evidence": "TDD surfaces design problems early, provides a regression safety net, and ensures every line of production code has a clear purpose tied to a tested requirement."
+    },
+    {
+      "id": "seed-global-002",
+      "content": "Format every commit message as '<type>(<scope>): <description>' where type is one of: feat, fix, refactor, test, docs, chore. The description must be in the imperative mood and under 72 characters.",
+      "scope": "global",
+      "tags": {"domain": ["git", "workflow"]},
+      "source_evidence": "Conventional commits enable automated changelog generation, make git history scannable, and signal intent at a glance during code review and bisect."
+    },
+    {
+      "id": "seed-global-003",
+      "content": "Never commit secrets, API keys, passwords, tokens, or credentials to version control — not even in private repositories. Use environment variables or a secrets manager, and add secret file patterns to .gitignore before the first commit.",
+      "scope": "global",
+      "tags": {"domain": ["security", "git"]},
+      "source_evidence": "Secrets in git history are effectively permanent: rotation is insufficient once a token is committed because history is cloned, forked, and cached by tools."
+    },
+    {
+      "id": "seed-global-004",
+      "content": "Each commit must represent one logical change. If the commit message requires 'and' to describe what changed, split it into two commits. Tests must be green before committing.",
+      "scope": "global",
+      "tags": {"domain": ["git", "workflow"]},
+      "source_evidence": "Atomic commits make git bisect effective, simplify code review, and allow individual changes to be reverted without collateral damage."
+    },
+    {
+      "id": "seed-global-005",
+      "content": "Use early returns (guard clauses) to handle error conditions and edge cases first. Place the happy path last, unindented. Avoid nesting control structures beyond two levels.",
+      "scope": "global",
+      "tags": {"domain": ["code-quality"]},
+      "source_evidence": "Deep nesting increases cognitive load and makes it harder to reason about the primary code path. Guard clauses keep the normal flow readable without the eye tracking indent levels."
+    },
+    {
+      "id": "seed-global-006",
+      "content": "A function should do one thing and do it well. If you need 'and' or 'or' to describe what a function does, extract the additional responsibility. Aim for functions under 30 lines.",
+      "scope": "global",
+      "tags": {"domain": ["code-quality", "design"]},
+      "source_evidence": "Single-responsibility functions are independently testable, composable, and comprehensible. Functions with multiple responsibilities hide coupling and resist change."
+    },
+    {
+      "id": "seed-global-007",
+      "content": "Name variables, functions, and types to reveal intent, not implementation. Prefer 'remainingRetries' over 'r', 'fetchUserById' over 'getData'. Boolean names should read as true/false questions: 'isActive', 'hasPermission'.",
+      "scope": "global",
+      "tags": {"domain": ["code-quality", "naming"]},
+      "source_evidence": "Code is read far more than it is written. Names that reveal intent eliminate the need for explanatory comments and reduce the mental effort required to understand code during review and maintenance."
+    },
+    {
+      "id": "seed-global-008",
+      "content": "Delete dead code rather than commenting it out. Version control remembers every deleted line. Commented-out code adds noise, creates false ambiguity about whether it will return, and is rarely maintained.",
+      "scope": "global",
+      "tags": {"domain": ["code-quality", "maintenance"]},
+      "source_evidence": "Commented-out code rots silently: it falls out of sync with surrounding changes and misleads future readers into thinking it may be needed. Git blame and git log are the correct tool for historical code."
+    },
+    {
+      "id": "seed-global-009",
+      "content": "Validate all user-supplied input at the API boundary: check types, lengths, formats, and value ranges before the data enters business logic. Use allowlists over denylists. Reject unknown input rather than filtering known bad input.",
+      "scope": "global",
+      "tags": {"domain": ["security", "api"]},
+      "source_evidence": "Unvalidated input is the root cause of injection attacks, data corruption, and unexpected behavior. Validating at the boundary prevents malformed data from propagating into the core domain."
+    },
+    {
+      "id": "seed-global-010",
+      "content": "Always log errors with enough context to diagnose the failure without reproducing it: include the operation name, relevant identifiers, and the original error. Never silently swallow errors with an empty catch/recover block.",
+      "scope": "global",
+      "tags": {"domain": ["observability", "error-handling"]},
+      "source_evidence": "Silent error swallowing is one of the hardest bugs to diagnose in production. Structured error logs with context are the primary tool for on-call engineers diagnosing incidents."
+    }
+  ]
+}

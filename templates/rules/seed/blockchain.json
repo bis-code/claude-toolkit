@@ -1,0 +1,46 @@
+{
+  "rules": [
+    {
+      "id": "seed-chain-001",
+      "content": "Always estimate gas before sending transactions using eth_estimateGas. Add a buffer of 10-20% over the estimate to account for state changes between estimation and execution. Never hardcode gas limits.",
+      "scope": "global",
+      "tags": {"tech_stack": ["solidity", "blockchain"], "domain": ["gas", "transactions"]},
+      "source_evidence": "Transactions that run out of gas fail silently — state changes are reverted but the gas is consumed. Hardcoded limits break when the underlying code changes. Dynamic estimation prevents both failure modes."
+    },
+    {
+      "id": "seed-chain-002",
+      "content": "Apply the Checks-Effects-Interactions pattern to all state-changing functions: validate preconditions first (checks), update all state variables second (effects), then make external calls last (interactions). Use OpenZeppelin's ReentrancyGuard on any function that transfers ETH or calls untrusted contracts.",
+      "scope": "global",
+      "tags": {"tech_stack": ["solidity", "blockchain"], "domain": ["security"]},
+      "source_evidence": "The DAO hack (2016) and countless clones exploited reentrancy: an external call re-entered the function before state was updated. CEI order and ReentrancyGuard are the two-layer defense against this attack class."
+    },
+    {
+      "id": "seed-chain-003",
+      "content": "Emit events for every significant state change in a contract: token transfers, ownership changes, configuration updates, approvals. Events are the primary mechanism for off-chain indexers and UIs to track on-chain state.",
+      "scope": "global",
+      "tags": {"tech_stack": ["solidity", "blockchain"], "domain": ["observability"]},
+      "source_evidence": "On-chain storage is expensive and not queryable by range or history. Events are stored in logs at a fraction of the gas cost and are indexed by block explorers, subgraphs, and frontend clients."
+    },
+    {
+      "id": "seed-chain-004",
+      "content": "Check the return value of every external call, including low-level .call() results. A call returning false is not an error in the EVM — it is a failed execution that requires explicit handling in the caller.",
+      "scope": "global",
+      "tags": {"tech_stack": ["solidity", "blockchain"], "domain": ["error-handling", "security"]},
+      "source_evidence": "ERC-20's transfer() historically returned false on failure instead of reverting. Ignoring the return value means the contract proceeds as if a failed token transfer succeeded, enabling fund loss or logical inconsistency."
+    },
+    {
+      "id": "seed-chain-005",
+      "content": "Use Solidity 0.8.0+ for automatic overflow and underflow protection, or OpenZeppelin SafeMath on older compilers. Never use unchecked blocks around arithmetic that affects balances, supply, or access control without a documented proof that overflow is impossible.",
+      "scope": "global",
+      "tags": {"tech_stack": ["solidity", "blockchain"], "domain": ["security"]},
+      "source_evidence": "Integer overflow and underflow in Solidity < 0.8.0 wrap silently. The 2018 BeautyChain (BEC) exploit drained $900M equivalent by overflowing a multiplication to zero, bypassing a balance check."
+    },
+    {
+      "id": "seed-chain-006",
+      "content": "Never store secrets, private keys, off-chain passwords, or sensitive user data in contract storage or calldata. All data on a public blockchain — including 'private' storage slots — is readable by anyone who knows the storage layout.",
+      "scope": "global",
+      "tags": {"tech_stack": ["solidity", "blockchain"], "domain": ["security"]},
+      "source_evidence": "EVM storage marked 'private' in Solidity only prevents other contracts from reading it via the ABI — it does not prevent direct storage slot reads via eth_getStorageAt. Everything written to the chain is public."
+    }
+  ]
+}
