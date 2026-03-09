@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Toolkit Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <!-- htmx — zero-JS progressive enhancement for API calls -->
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" defer></script>
+  <!-- Alpine.js — lightweight reactivity for UI state -->
+  <script src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js" defer></script>
+</head>
+<body x-data="app()" x-init="loadStats()">
+
+<div class="app">
+
+  <!-- ── Sidebar ──────────────────────────────────────────── -->
+  <nav class="sidebar">
+    <div class="sidebar__brand">Claude Toolkit</div>
+
+    <a class="nav-item" :class="{ active: page === 'overview' }"
+       @click.prevent="navigate('overview')" href="#">
+      <span class="nav-item__icon">◈</span> Overview
+    </a>
+    <a class="nav-item" :class="{ active: page === 'rules' }"
+       @click.prevent="navigate('rules')" href="#">
+      <span class="nav-item__icon">⊞</span> Rules
+    </a>
+    <a class="nav-item" :class="{ active: page === 'sessions' }"
+       @click.prevent="navigate('sessions')" href="#">
+      <span class="nav-item__icon">◷</span> Sessions
+    </a>
+    <a class="nav-item" :class="{ active: page === 'improvements' }"
+       @click.prevent="navigate('improvements')" href="#">
+      <span class="nav-item__icon">↑</span> Improvements
+    </a>
+  </nav>
+
+  <!-- ── Header ───────────────────────────────────────────── -->
+  <header class="header">
+    <span class="header__title" x-text="pageTitle()"></span>
+    <span class="header__badge">v4</span>
+    <span class="htmx-indicator" id="global-indicator">loading…</span>
+  </header>
+
+  <!-- ── Main ─────────────────────────────────────────────── -->
+  <main class="main" id="main-content">
+
+    <!-- Overview page -->
+    <template x-if="page === 'overview'">
+      <div>
+        <h1 class="page-title">Overview</h1>
+
+        <div class="stats-grid">
+          <div class="stat-card stat-card--accent">
+            <div class="stat-card__label">Active Rules</div>
+            <div class="stat-card__value" x-text="stats.total_rules ?? '—'"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__label">Deprecated Rules</div>
+            <div class="stat-card__value stat-card--danger" x-text="stats.deprecated_rules ?? '—'"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card__label">Sessions</div>
+            <div class="stat-card__value" x-text="stats.total_sessions ?? '—'"></div>
+          </div>
+          <div class="stat-card stat-card--warning">
+            <div class="stat-card__label">Pending</div>
+            <div class="stat-card__value" x-text="stats.improvements?.pending ?? '—'"></div>
+          </div>
+          <div class="stat-card stat-card--success">
+            <div class="stat-card__label">Applied</div>
+            <div class="stat-card__value" x-text="stats.improvements?.applied ?? '—'"></div>
+          </div>
+          <div class="stat-card stat-card--danger">
+            <div class="stat-card__label">Rejected</div>
+            <div class="stat-card__value" x-text="stats.improvements?.rejected ?? '—'"></div>
+          </div>
+        </div>
+
+        <p class="text-muted" style="font-size:12px;">
+          Stats refresh on each page load. Navigate to a section for full detail.
+        </p>
+      </div>
+    </template>
+
+    <!-- Rules page -->
+    <template x-if="page === 'rules'">
+      <div>
+        <h1 class="page-title">Rules</h1>
+
+        <div class="filters">
+          <select class="filter-input" x-model="filters.rules.scope"
+                  @change="loadRules()">
+            <option value="">All scopes</option>
+            <option value="global">global</option>
+            <option value="workspace">workspace</option>
+            <option value="project">project</option>
+            <option value="task">task</option>
+          </select>
+          <input class="filter-input" type="text" placeholder="Filter by project…"
+                 x-model="filters.rules.project"
+                 @input.debounce.400ms="loadRules()" />
+        </div>
+
+        <div class="table-wrap">
+          <div class="table-header">
+            <span class="table-header__title">Rules</span>
+            <span class="text-muted" x-text="rulesData.count + ' total'"></span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Scope</th>
+                <th>Content</th>
+                <th>Project</th>
+                <th>Effectiveness</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-if="rulesData.rules && rulesData.rules.length > 0">
+                <template x-for="rule in rulesData.rules" :key="rule.id">
+                  <tr>
+                    <td>
+                      <span class="badge" :class="'badge--' + rule.scope" x-text="rule.scope"></span>
+                    </td>
+                    <td class="text-mono" x-text="rule.content"></td>
+                    <td class="text-muted" x-text="rule.project || '—'"></td>
+                    <td>
+                      <div class="eff-bar">
+                        <div class="eff-bar__track">
+                          <div class="eff-bar__fill"
+                               :style="'width:' + Math.round((rule.effectiveness||0) * 100) + '%'">
+                          </div>
+                        </div>
+                        <span x-text="Math.round((rule.effectiveness||0) * 100) + '%'"></span>
+                      </div>
+                    </td>
+                    <td class="text-muted" x-text="formatDate(rule.updated_at)"></td>
+                  </tr>
+                </template>
+              </template>
+              <template x-if="!rulesData.rules || rulesData.rules.length === 0">
+                <tr><td colspan="5" class="empty-state">No rules found.</td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+
+    <!-- Sessions page -->
+    <template x-if="page === 'sessions'">
+      <div>
+        <h1 class="page-title">Sessions</h1>
+
+        <div class="filters">
+          <input class="filter-input" type="text" placeholder="Filter by project…"
+                 x-model="filters.sessions.project"
+                 @input.debounce.400ms="loadSessions()" />
+          <select class="filter-input" x-model="filters.sessions.limit"
+                  @change="loadSessions()">
+            <option value="20">Last 20</option>
+            <option value="50">Last 50</option>
+            <option value="100">Last 100</option>
+          </select>
+        </div>
+
+        <div class="table-wrap">
+          <div class="table-header">
+            <span class="table-header__title">Sessions</span>
+            <span class="text-muted" x-text="sessionsData.count + ' shown'"></span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Project</th>
+                <th>Started</th>
+                <th>Ended</th>
+                <th>Tasks ✓/✗</th>
+                <th>Confidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-if="sessionsData.sessions && sessionsData.sessions.length > 0">
+                <template x-for="sess in sessionsData.sessions" :key="sess.id">
+                  <tr>
+                    <td class="text-mono" x-text="sess.id.substring(0,8) + '…'"></td>
+                    <td x-text="sess.project"></td>
+                    <td class="text-muted" x-text="formatDate(sess.started_at)"></td>
+                    <td class="text-muted" x-text="sess.ended_at ? formatDate(sess.ended_at) : '—'"></td>
+                    <td>
+                      <span class="badge badge--success" x-text="sess.tasks_completed"></span>
+                      <span class="badge badge--error" x-text="sess.tasks_failed"></span>
+                    </td>
+                    <td x-text="Math.round((sess.confidence||0) * 100) + '%'"></td>
+                  </tr>
+                </template>
+              </template>
+              <template x-if="!sessionsData.sessions || sessionsData.sessions.length === 0">
+                <tr><td colspan="6" class="empty-state">No sessions found.</td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+
+    <!-- Improvements page -->
+    <template x-if="page === 'improvements'">
+      <div>
+        <h1 class="page-title">Improvements</h1>
+
+        <div class="filters">
+          <select class="filter-input" x-model="filters.improvements.status"
+                  @change="loadImprovements()">
+            <option value="">All statuses</option>
+            <option value="pending">pending</option>
+            <option value="applied">applied</option>
+            <option value="rejected">rejected</option>
+          </select>
+        </div>
+
+        <div class="table-wrap">
+          <div class="table-header">
+            <span class="table-header__title">Proposed Improvements</span>
+            <span class="text-muted" x-text="improvementsData.count + ' total'"></span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Scope</th>
+                <th>Content</th>
+                <th>Confidence</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-if="improvementsData.improvements && improvementsData.improvements.length > 0">
+                <template x-for="imp in improvementsData.improvements" :key="imp.id">
+                  <tr>
+                    <td>
+                      <span class="badge" :class="'badge--' + imp.status" x-text="imp.status"></span>
+                    </td>
+                    <td>
+                      <span class="badge" :class="'badge--' + imp.scope" x-text="imp.scope"></span>
+                    </td>
+                    <td class="text-mono" x-text="imp.content"></td>
+                    <td x-text="Math.round((imp.confidence||0) * 100) + '%'"></td>
+                    <td class="text-muted" x-text="formatDate(imp.created_at)"></td>
+                  </tr>
+                </template>
+              </template>
+              <template x-if="!improvementsData.improvements || improvementsData.improvements.length === 0">
+                <tr><td colspan="5" class="empty-state">No improvements found.</td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+
+  </main>
+</div>
+
+<script>
+function app() {
+  return {
+    page: 'overview',
+    stats: {},
+    rulesData: { rules: [], count: 0 },
+    sessionsData: { sessions: [], count: 0 },
+    improvementsData: { improvements: [], count: 0 },
+    filters: {
+      rules: { scope: '', project: '' },
+      sessions: { project: '', limit: '20' },
+      improvements: { status: '' },
+    },
+
+    pageTitle() {
+      const titles = {
+        overview: 'Overview',
+        rules: 'Rules',
+        sessions: 'Sessions',
+        improvements: 'Improvements',
+      };
+      return titles[this.page] || 'Dashboard';
+    },
+
+    navigate(p) {
+      this.page = p;
+      if (p === 'overview') this.loadStats();
+      if (p === 'rules') this.loadRules();
+      if (p === 'sessions') this.loadSessions();
+      if (p === 'improvements') this.loadImprovements();
+    },
+
+    async loadStats() {
+      const r = await fetch('/api/stats');
+      this.stats = await r.json();
+    },
+
+    async loadRules() {
+      const params = new URLSearchParams();
+      if (this.filters.rules.scope)   params.set('scope',   this.filters.rules.scope);
+      if (this.filters.rules.project) params.set('project', this.filters.rules.project);
+      const r = await fetch('/api/rules?' + params);
+      this.rulesData = await r.json();
+    },
+
+    async loadSessions() {
+      const params = new URLSearchParams();
+      if (this.filters.sessions.project) params.set('project', this.filters.sessions.project);
+      if (this.filters.sessions.limit)   params.set('limit',   this.filters.sessions.limit);
+      const r = await fetch('/api/sessions?' + params);
+      this.sessionsData = await r.json();
+    },
+
+    async loadImprovements() {
+      const params = new URLSearchParams();
+      if (this.filters.improvements.status) params.set('status', this.filters.improvements.status);
+      const r = await fetch('/api/improvements?' + params);
+      this.improvementsData = await r.json();
+    },
+
+    formatDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    },
+  };
+}
+</script>
+
+</body>
+</html>
