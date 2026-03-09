@@ -1,0 +1,13 @@
+{
+  "name": "mixed-frontend",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}
