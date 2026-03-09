@@ -72,12 +72,26 @@ CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 
+CREATE TABLE IF NOT EXISTS improvements (
+	id TEXT PRIMARY KEY,
+	content TEXT NOT NULL,
+	scope TEXT NOT NULL,
+	project TEXT DEFAULT '',
+	tags_json TEXT DEFAULT '{}',
+	evidence TEXT DEFAULT '',
+	confidence REAL DEFAULT 0,
+	status TEXT DEFAULT 'pending',
+	reason TEXT DEFAULT '',
+	created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_improvements_status ON improvements(status);
+
 CREATE TABLE IF NOT EXISTS schema_version (
 	version INTEGER PRIMARY KEY
 );
 `
 
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 // Store provides database operations for the toolkit.
 type Store struct {
@@ -86,20 +100,34 @@ type Store struct {
 
 // Rule represents a rule in the database.
 type Rule struct {
-	ID             string            `json:"id"`
-	Content        string            `json:"content"`
-	Scope          string            `json:"scope"`
-	Project        string            `json:"project,omitempty"`
-	Workspace      string            `json:"workspace,omitempty"`
+	ID             string              `json:"id"`
+	Content        string              `json:"content"`
+	Scope          string              `json:"scope"`
+	Project        string              `json:"project,omitempty"`
+	Workspace      string              `json:"workspace,omitempty"`
 	Tags           map[string][]string `json:"tags,omitempty"`
-	Effectiveness  float64           `json:"effectiveness"`
-	LocalOnly      bool              `json:"local_only"`
-	Sensitive      bool              `json:"sensitive"`
-	CreatedFrom    string            `json:"created_from,omitempty"`
-	SourceEvidence string            `json:"source_evidence,omitempty"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
-	Deprecated     bool              `json:"deprecated"`
+	Effectiveness  float64             `json:"effectiveness"`
+	LocalOnly      bool                `json:"local_only"`
+	Sensitive      bool                `json:"sensitive"`
+	CreatedFrom    string              `json:"created_from,omitempty"`
+	SourceEvidence string              `json:"source_evidence,omitempty"`
+	CreatedAt      time.Time           `json:"created_at"`
+	UpdatedAt      time.Time           `json:"updated_at"`
+	Deprecated     bool                `json:"deprecated"`
+}
+
+// Improvement represents a proposed rule improvement from pattern detection.
+type Improvement struct {
+	ID         string              `json:"id"`
+	Content    string              `json:"content"`
+	Scope      string              `json:"scope"`
+	Project    string              `json:"project,omitempty"`
+	Tags       map[string][]string `json:"tags,omitempty"`
+	Evidence   string              `json:"evidence"`
+	Confidence float64             `json:"confidence"`
+	Status     string              `json:"status"` // pending, applied, rejected
+	Reason     string              `json:"reason,omitempty"`
+	CreatedAt  time.Time           `json:"created_at"`
 }
 
 // Session represents a Claude session in the database.
@@ -210,6 +238,28 @@ CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 UPDATE schema_version SET version = 2;`
 		if _, err := db.Exec(migration); err != nil {
 			return fmt.Errorf("migration v2 failed: %w", err)
+		}
+	}
+
+	// Migration v3: Add improvements table
+	if version < 3 {
+		migration := `
+CREATE TABLE IF NOT EXISTS improvements (
+	id TEXT PRIMARY KEY,
+	content TEXT NOT NULL,
+	scope TEXT NOT NULL,
+	project TEXT DEFAULT '',
+	tags_json TEXT DEFAULT '{}',
+	evidence TEXT DEFAULT '',
+	confidence REAL DEFAULT 0,
+	status TEXT DEFAULT 'pending',
+	reason TEXT DEFAULT '',
+	created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_improvements_status ON improvements(status);
+UPDATE schema_version SET version = 3;`
+		if _, err := db.Exec(migration); err != nil {
+			return fmt.Errorf("migration v3 failed: %w", err)
 		}
 	}
 
@@ -431,6 +481,126 @@ func (s *Store) RecordScore(ruleID string, helpful bool, context, sessionID stri
 	return err
 }
 
+// DeprecateLowScoreRules marks rules as deprecated if their effectiveness
+// is below the threshold after a minimum number of scores.
+// Returns the list of deprecated rule IDs.
+func (s *Store) DeprecateLowScoreRules(threshold float64, minScores int) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT r.id FROM rules r
+		WHERE r.effectiveness < ? AND r.deprecated = 0
+		AND (SELECT COUNT(*) FROM rule_scores rs WHERE rs.rule_id = r.id) >= ?`,
+		threshold, minScores,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query low-score rules: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan rule id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(ids) == 0 {
+		return ids, nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, id := range ids {
+		if _, err := s.db.Exec(
+			"UPDATE rules SET deprecated = 1, updated_at = ? WHERE id = ?", now, id,
+		); err != nil {
+			return nil, fmt.Errorf("failed to deprecate rule %q: %w", id, err)
+		}
+	}
+
+	return ids, nil
+}
+
+// CreateImprovement inserts a new improvement into the database.
+func (s *Store) CreateImprovement(imp *Improvement) error {
+	tagsJSON, err := json.Marshal(imp.Tags)
+	if err != nil {
+		return fmt.Errorf("cannot marshal tags: %w", err)
+	}
+
+	now := time.Now().UTC()
+	imp.CreatedAt = now
+
+	_, err = s.db.Exec(`
+		INSERT INTO improvements (id, content, scope, project, tags_json, evidence, confidence, status, reason, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		imp.ID, imp.Content, imp.Scope, imp.Project,
+		string(tagsJSON), imp.Evidence, imp.Confidence,
+		imp.Status, imp.Reason,
+		now.Format(time.RFC3339),
+	)
+	return err
+}
+
+// ListImprovements returns improvements ordered by created_at DESC.
+// If status is empty, all improvements are returned.
+func (s *Store) ListImprovements(status string) ([]*Improvement, error) {
+	query := `SELECT id, content, scope, project, tags_json, evidence, confidence, status, reason, created_at
+	          FROM improvements`
+	args := []interface{}{}
+
+	if status != "" {
+		query += " WHERE status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var imps []*Improvement
+	for rows.Next() {
+		imp := &Improvement{}
+		var tagsJSON, createdAt string
+		err := rows.Scan(
+			&imp.ID, &imp.Content, &imp.Scope, &imp.Project,
+			&tagsJSON, &imp.Evidence, &imp.Confidence,
+			&imp.Status, &imp.Reason, &createdAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		imp.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		if err := json.Unmarshal([]byte(tagsJSON), &imp.Tags); err != nil {
+			imp.Tags = make(map[string][]string)
+		}
+		imps = append(imps, imp)
+	}
+	return imps, rows.Err()
+}
+
+// UpdateImprovementStatus updates the status and optional reason of an improvement.
+func (s *Store) UpdateImprovementStatus(id, status, reason string) error {
+	result, err := s.db.Exec(
+		"UPDATE improvements SET status = ?, reason = ? WHERE id = ?",
+		status, reason, id,
+	)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("improvement %q not found", id)
+	}
+	return nil
+}
+
 // CreateSession inserts a new session into the database.
 func (s *Store) CreateSession(session *Session) error {
 	_, err := s.db.Exec(`
@@ -592,4 +762,31 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// CountScoresPerRule returns a map of rule_id → score count for all rules.
+func (s *Store) CountScoresPerRule() (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT rule_id, COUNT(*) FROM rule_scores GROUP BY rule_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var id string
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return nil, err
+		}
+		counts[id] = count
+	}
+	return counts, rows.Err()
+}
+
+// CountDeprecatedRules returns the total number of deprecated rules.
+func (s *Store) CountDeprecatedRules() (int, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM rules WHERE deprecated = 1").Scan(&count)
+	return count, err
 }

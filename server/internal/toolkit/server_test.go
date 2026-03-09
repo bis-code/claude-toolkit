@@ -933,3 +933,178 @@ func TestIntegration_ConfigurePatrol(t *testing.T) {
 		t.Error("expected retry_loop alert after lowering threshold to 1")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Evolution tool tests (US-016)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesEvolutionTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	evolutionTools := []string{
+		"toolkit__run_evolution_cycle",
+		"toolkit__get_pending_improvements",
+		"toolkit__apply_improvement",
+		"toolkit__reject_improvement",
+		"toolkit__audit_rules",
+		"toolkit__get_evolution_stats",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range evolutionTools {
+		if !toolNames[expected] {
+			t.Errorf("expected evolution tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_RunEvolutionCycle(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create sessions with repeated failure patterns to trigger detection.
+	for i := 0; i < 3; i++ {
+		sessID := fmt.Sprintf("ev-sess-%d", i)
+		store.CreateSession(&db.Session{
+			ID: sessID, Project: "ev-project", StartedAt: nowTime(),
+		})
+		// Repeated failure with the same details — should become a pattern.
+		store.CreateEvent(&db.Event{
+			ID:        fmt.Sprintf("ev-evt-%d", i),
+			SessionID: sessID,
+			Type:      "tool_call",
+			Result:    "failure",
+			Details:   "go build ./... fails with missing package",
+			Timestamp: nowTime(),
+		})
+	}
+
+	result := callTool(t, c, "toolkit__run_evolution_cycle", map[string]interface{}{})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	// Should report patterns_found >= 1.
+	patternsFound, ok := resp["patterns_found"].(float64)
+	if !ok {
+		t.Fatal("patterns_found should be a number")
+	}
+	if patternsFound < 1 {
+		t.Errorf("patterns_found = %v, want >= 1", patternsFound)
+	}
+
+	// improvements_proposed should be >= 1.
+	improvementsProposed, ok := resp["improvements_proposed"].(float64)
+	if !ok {
+		t.Fatal("improvements_proposed should be a number")
+	}
+	if improvementsProposed < 1 {
+		t.Errorf("improvements_proposed = %v, want >= 1", improvementsProposed)
+	}
+
+	// rules_deprecated should be present (0 is fine since no scored rules).
+	if _, ok := resp["rules_deprecated"]; !ok {
+		t.Error("rules_deprecated key should be present in response")
+	}
+}
+
+func TestIntegration_ApplyImprovement(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Seed an improvement directly via DB (simulating a completed cycle).
+	imp := &db.Improvement{
+		ID:         "imp-apply-001",
+		Content:    "Always check error returns from DB calls",
+		Scope:      "global",
+		Evidence:   "Seen 3 times",
+		Confidence: 0.8,
+		Status:     "pending",
+	}
+	if err := store.CreateImprovement(imp); err != nil {
+		t.Fatalf("failed to seed improvement: %v", err)
+	}
+
+	result := callTool(t, c, "toolkit__apply_improvement", map[string]interface{}{
+		"id": "imp-apply-001",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	newRuleID, ok := resp["rule_id"].(string)
+	if !ok || newRuleID == "" {
+		t.Fatal("expected non-empty rule_id in response")
+	}
+
+	// Verify the new rule was created in the DB.
+	rule, err := store.GetRule(newRuleID)
+	if err != nil {
+		t.Fatalf("rule %q not found in DB: %v", newRuleID, err)
+	}
+	if rule.Content != imp.Content {
+		t.Errorf("rule content = %q, want %q", rule.Content, imp.Content)
+	}
+	if rule.CreatedFrom != "evolution" {
+		t.Errorf("created_from = %q, want %q", rule.CreatedFrom, "evolution")
+	}
+
+	// Verify the improvement status was updated to applied.
+	applied, err := store.ListImprovements("applied")
+	if err != nil {
+		t.Fatalf("ListImprovements failed: %v", err)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied improvement, got %d", len(applied))
+	}
+}
+
+func TestIntegration_RejectImprovement(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateImprovement(&db.Improvement{
+		ID:         "imp-reject-001",
+		Content:    "Some proposed rule",
+		Scope:      "project",
+		Project:    "my-proj",
+		Evidence:   "3 occurrences",
+		Confidence: 0.4,
+		Status:     "pending",
+	})
+
+	result := callTool(t, c, "toolkit__reject_improvement", map[string]interface{}{
+		"id":     "imp-reject-001",
+		"reason": "too vague to be actionable",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "improvement rejected" {
+		t.Errorf("message = %v, want 'improvement rejected'", resp["message"])
+	}
+
+	// Verify the improvement status in DB.
+	rejected, err := store.ListImprovements("rejected")
+	if err != nil {
+		t.Fatalf("ListImprovements failed: %v", err)
+	}
+	if len(rejected) != 1 {
+		t.Fatalf("expected 1 rejected improvement, got %d", len(rejected))
+	}
+	if rejected[0].Reason != "too vague to be actionable" {
+		t.Errorf("reason = %q, want 'too vague to be actionable'", rejected[0].Reason)
+	}
+}

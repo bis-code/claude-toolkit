@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -536,5 +537,211 @@ func TestPurgeOldEvents(t *testing.T) {
 	}
 	if events[0].ID != "evt-new" {
 		t.Errorf("expected remaining event to be evt-new, got %s", events[0].ID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Improvement CRUD tests (US-016)
+// ---------------------------------------------------------------------------
+
+func TestCreateImprovement(t *testing.T) {
+	store := setupStore(t)
+
+	imp := &db.Improvement{
+		ID:         "imp-001",
+		Content:    "Avoid: missing error handling — seen 3 times.",
+		Scope:      "global",
+		Evidence:   "Detected 3 occurrences",
+		Confidence: 0.7,
+		Status:     "pending",
+	}
+
+	if err := store.CreateImprovement(imp); err != nil {
+		t.Fatalf("CreateImprovement failed: %v", err)
+	}
+
+	imps, err := store.ListImprovements("pending")
+	if err != nil {
+		t.Fatalf("ListImprovements failed: %v", err)
+	}
+	if len(imps) != 1 {
+		t.Fatalf("expected 1 improvement, got %d", len(imps))
+	}
+	got := imps[0]
+	if got.ID != "imp-001" {
+		t.Errorf("id = %q, want %q", got.ID, "imp-001")
+	}
+	if got.Content != "Avoid: missing error handling — seen 3 times." {
+		t.Errorf("content = %q", got.Content)
+	}
+	if got.Confidence != 0.7 {
+		t.Errorf("confidence = %f, want 0.7", got.Confidence)
+	}
+	if got.CreatedAt.IsZero() {
+		t.Error("created_at should not be zero")
+	}
+}
+
+func TestListImprovements_FilterByStatus(t *testing.T) {
+	store := setupStore(t)
+
+	store.CreateImprovement(&db.Improvement{
+		ID: "imp-pending-1", Content: "P1", Scope: "global",
+		Evidence: "e1", Confidence: 0.5, Status: "pending",
+	})
+	store.CreateImprovement(&db.Improvement{
+		ID: "imp-pending-2", Content: "P2", Scope: "project",
+		Evidence: "e2", Confidence: 0.6, Status: "pending",
+	})
+	store.CreateImprovement(&db.Improvement{
+		ID: "imp-applied-1", Content: "A1", Scope: "global",
+		Evidence: "e3", Confidence: 0.8, Status: "applied",
+	})
+	store.CreateImprovement(&db.Improvement{
+		ID: "imp-rejected-1", Content: "R1", Scope: "global",
+		Evidence: "e4", Confidence: 0.3, Status: "rejected",
+	})
+
+	pending, err := store.ListImprovements("pending")
+	if err != nil {
+		t.Fatalf("ListImprovements(pending) failed: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Errorf("expected 2 pending, got %d", len(pending))
+	}
+
+	applied, err := store.ListImprovements("applied")
+	if err != nil {
+		t.Fatalf("ListImprovements(applied) failed: %v", err)
+	}
+	if len(applied) != 1 {
+		t.Errorf("expected 1 applied, got %d", len(applied))
+	}
+
+	// Empty status should return all improvements
+	all, err := store.ListImprovements("")
+	if err != nil {
+		t.Fatalf("ListImprovements(\"\") failed: %v", err)
+	}
+	if len(all) != 4 {
+		t.Errorf("expected 4 total improvements, got %d", len(all))
+	}
+}
+
+func TestUpdateImprovementStatus(t *testing.T) {
+	store := setupStore(t)
+
+	store.CreateImprovement(&db.Improvement{
+		ID: "imp-upd-001", Content: "Test", Scope: "global",
+		Evidence: "ev", Confidence: 0.5, Status: "pending",
+	})
+
+	// Promote to applied
+	if err := store.UpdateImprovementStatus("imp-upd-001", "applied", ""); err != nil {
+		t.Fatalf("UpdateImprovementStatus(applied) failed: %v", err)
+	}
+
+	applied, _ := store.ListImprovements("applied")
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied, got %d", len(applied))
+	}
+	if applied[0].Status != "applied" {
+		t.Errorf("status = %q, want applied", applied[0].Status)
+	}
+
+	// Reject another one
+	store.CreateImprovement(&db.Improvement{
+		ID: "imp-upd-002", Content: "Test2", Scope: "global",
+		Evidence: "ev2", Confidence: 0.4, Status: "pending",
+	})
+	if err := store.UpdateImprovementStatus("imp-upd-002", "rejected", "not relevant"); err != nil {
+		t.Fatalf("UpdateImprovementStatus(rejected) failed: %v", err)
+	}
+
+	rejected, _ := store.ListImprovements("rejected")
+	if len(rejected) != 1 {
+		t.Fatalf("expected 1 rejected, got %d", len(rejected))
+	}
+	if rejected[0].Reason != "not relevant" {
+		t.Errorf("reason = %q, want 'not relevant'", rejected[0].Reason)
+	}
+}
+
+func TestUpdateImprovementStatus_NotFound(t *testing.T) {
+	store := setupStore(t)
+
+	err := store.UpdateImprovementStatus("nonexistent", "applied", "")
+	if err == nil {
+		t.Error("expected error for nonexistent improvement, got nil")
+	}
+}
+
+func TestDeprecateLowScoreRules(t *testing.T) {
+	store := setupStore(t)
+
+	// Rule with enough scores and low effectiveness → should be deprecated.
+	store.CreateRule(&db.Rule{
+		ID: "low-eff-rule", Content: "Bad rule", Scope: "global",
+		Effectiveness: 0.2,
+	})
+	// Record 5 scores: all unhelpful → effectiveness stays at 0.
+	for i := 0; i < 5; i++ {
+		store.RecordScore("low-eff-rule", false, "not helpful", fmt.Sprintf("s%d", i))
+	}
+
+	// Rule with enough scores but high effectiveness → should NOT be deprecated.
+	store.CreateRule(&db.Rule{
+		ID: "high-eff-rule", Content: "Good rule", Scope: "global",
+		Effectiveness: 0.9,
+	})
+	for i := 0; i < 5; i++ {
+		store.RecordScore("high-eff-rule", true, "helpful", fmt.Sprintf("s-h%d", i))
+	}
+
+	// Rule with too few scores → should NOT be deprecated even if effectiveness is low.
+	store.CreateRule(&db.Rule{
+		ID: "few-scores-rule", Content: "New rule, low score", Scope: "global",
+		Effectiveness: 0.1,
+	})
+	store.RecordScore("few-scores-rule", false, "not helpful", "s-f1")
+	// Only 1 score — below minScores=5 threshold.
+
+	// Rule already deprecated → should not appear in the returned list.
+	store.CreateRule(&db.Rule{
+		ID: "already-deprecated", Content: "Old rule", Scope: "global",
+		Effectiveness: 0.0, Deprecated: true,
+	})
+
+	deprecated, err := store.DeprecateLowScoreRules(0.3, 5)
+	if err != nil {
+		t.Fatalf("DeprecateLowScoreRules failed: %v", err)
+	}
+
+	if len(deprecated) != 1 {
+		t.Errorf("expected 1 deprecated rule, got %d: %v", len(deprecated), deprecated)
+	}
+	if len(deprecated) > 0 && deprecated[0] != "low-eff-rule" {
+		t.Errorf("deprecated[0] = %q, want %q", deprecated[0], "low-eff-rule")
+	}
+
+	// Verify the rule is actually marked deprecated in the DB.
+	rule, err := store.GetRule("low-eff-rule")
+	if err != nil {
+		t.Fatalf("GetRule failed: %v", err)
+	}
+	if !rule.Deprecated {
+		t.Error("low-eff-rule should be marked deprecated")
+	}
+
+	// Verify the good rule is still active.
+	goodRule, _ := store.GetRule("high-eff-rule")
+	if goodRule.Deprecated {
+		t.Error("high-eff-rule should NOT be deprecated")
+	}
+
+	// Verify the rule with too few scores is still active.
+	fewRule, _ := store.GetRule("few-scores-rule")
+	if fewRule.Deprecated {
+		t.Error("few-scores-rule should NOT be deprecated (insufficient scores)")
 	}
 }
