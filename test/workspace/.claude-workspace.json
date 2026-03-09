@@ -12,5 +12,5 @@
     "Protobuf changes in shared/ must update all repos"
   ],
   "dependency_order": ["api-go", "worker-rust", "bff-ts", "ml-python"],
-  "domain_labels": ["backend", "ml", "frontend", "worker"]
+  "domain_labels": {"api-go": "backend", "ml-python": "ml", "bff-ts": "frontend", "worker-rust": "worker"}
 }

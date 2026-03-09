@@ -317,7 +317,7 @@ func TestLoadConfig_ValidJSON(t *testing.T) {
 			{"path": "web", "type": "typescript"}
 		],
 		"shared": ["docs"],
-		"domain_labels": ["backend", "frontend"]
+		"domain_labels": {"api": "backend", "web": "frontend"}
 	}`
 	if err := os.WriteFile(cfgPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -377,7 +377,7 @@ func TestSaveConfig_WritesJSON(t *testing.T) {
 			{Path: "api", Type: "go", Branch: "main"},
 		},
 		Shared:       []string{"infra"},
-		DomainLabels: []string{"backend"},
+		DomainLabels: map[string]string{"api": "backend"},
 	}
 
 	if err := workspace.SaveConfig(cfgPath, original); err != nil {

@@ -8,7 +8,7 @@ type Config struct {
 	PlanningRepo    string   `json:"planning_repo,omitempty"`
 	CrossRepoRules  []string `json:"cross_repo_rules,omitempty"`
 	DependencyOrder []string `json:"dependency_order,omitempty"`
-	DomainLabels    []string `json:"domain_labels,omitempty"`
+	DomainLabels    map[string]string `json:"domain_labels,omitempty"`
 }
 
 // Repo represents a single repository in the workspace.
