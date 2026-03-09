@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"io/fs"
+	"net"
 	"net/http"
 	"strconv"
 
@@ -37,6 +38,12 @@ func (s *Server) Handler() http.Handler {
 // ListenAndServe starts the dashboard on the given address.
 func (s *Server) ListenAndServe(addr string) error {
 	return http.ListenAndServe(addr, s.mux) //nolint:gosec
+}
+
+// Serve accepts connections on the given listener.
+func (s *Server) Serve(ln net.Listener) error {
+	srv := &http.Server{Handler: s.mux} //nolint:gosec
+	return srv.Serve(ln)
 }
 
 func (s *Server) registerRoutes() {

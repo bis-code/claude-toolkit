@@ -22,10 +22,11 @@ const (
 
 // handlers holds the dependencies for MCP tool handlers.
 type handlers struct {
-	store    *db.Store
-	engine   *rules.Engine
-	detector *patrol.Detector
-	evEngine *evolution.Engine
+	store         *db.Store
+	engine        *rules.Engine
+	detector      *patrol.Detector
+	evEngine      *evolution.Engine
+	dashboardAddr string
 }
 
 // NewServer creates a new MCP server with all toolkit tools registered.
@@ -48,10 +49,11 @@ func NewServer(opts ...Option) *server.MCPServer {
 	}
 
 	h := &handlers{
-		store:    store,
-		engine:   rules.NewEngine(store),
-		detector: patrol.NewDetector(patrol.DefaultThresholds()),
-		evEngine: evolution.NewEngine(store),
+		store:         store,
+		engine:        rules.NewEngine(store),
+		detector:      patrol.NewDetector(patrol.DefaultThresholds()),
+		evEngine:      evolution.NewEngine(store),
+		dashboardAddr: cfg.dashboardAddr,
 	}
 
 	s := server.NewMCPServer(
@@ -69,13 +71,21 @@ func NewServer(opts ...Option) *server.MCPServer {
 type Option func(*config)
 
 type config struct {
-	store *db.Store
+	store         *db.Store
+	dashboardAddr string
 }
 
 // WithStore sets the database store for the server.
 func WithStore(store *db.Store) Option {
 	return func(c *config) {
 		c.store = store
+	}
+}
+
+// WithDashboardAddr records the dashboard address so health_check can report it.
+func WithDashboardAddr(addr string) Option {
+	return func(c *config) {
+		c.dashboardAddr = addr
 	}
 }
 
@@ -216,13 +226,19 @@ func (h *handlers) registerTools(s *server.MCPServer) {
 }
 
 func (h *handlers) handleHealthCheck(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	status := fmt.Sprintf(
-		`{"server": "%s", "version": "%s", "status": "healthy", "go_version": "%s", "platform": "%s/%s", "timestamp": "%s"}`,
-		ServerName, ServerVersion,
-		runtime.Version(), runtime.GOOS, runtime.GOARCH,
-		time.Now().UTC().Format(time.RFC3339),
-	)
-	return mcp.NewToolResultText(status), nil
+	result := map[string]string{
+		"server":     ServerName,
+		"version":    ServerVersion,
+		"status":     "healthy",
+		"go_version": runtime.Version(),
+		"platform":   runtime.GOOS + "/" + runtime.GOARCH,
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+	}
+	if h.dashboardAddr != "" {
+		result["dashboard"] = "http://" + h.dashboardAddr
+	}
+	b, _ := json.Marshal(result)
+	return mcp.NewToolResultText(string(b)), nil
 }
 
 func (h *handlers) handleGetActiveRules(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

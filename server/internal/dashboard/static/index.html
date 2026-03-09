@@ -44,6 +44,13 @@
        @click.prevent="navigate('audit')" href="#">
       <span class="nav-item__icon">✓</span> Audit
     </a>
+
+    <div style="margin-top:auto; padding-top:16px; border-top:1px solid #334155;">
+      <a class="nav-item" :class="{ active: page === 'workflow' }"
+         @click.prevent="navigate('workflow')" href="#">
+        <span class="nav-item__icon">▶</span> Workflow
+      </a>
+    </div>
   </nav>
 
   <!-- ── Header ───────────────────────────────────────────── -->
@@ -381,6 +388,229 @@
       </div>
     </template>
 
+    <!-- Workflow page -->
+    <template x-if="page === 'workflow'">
+      <div class="workflow-page">
+        <h1 class="page-title">Workflow Guide</h1>
+
+        <div class="workflow-section">
+          <h2>New Project Setup</h2>
+          <pre class="code-block">cd ~/som/new-project
+bash ~/.claude/toolkit/install.sh</pre>
+          <p class="text-muted">User-scope MCPs are already configured. The installer adds project-specific files: rules, skills, agents, hooks.</p>
+        </div>
+
+        <div class="workflow-section">
+          <h2>Updating Projects</h2>
+          <pre class="code-block"># Update a single project
+cd ~/som/my-project
+bash ~/.claude/toolkit/install.sh --update --auto
+
+# Only the binary (all projects share it)
+cd ~/.claude/toolkit &amp;&amp; go build -o bin/claude-toolkit-server ./server/cmd/server/</pre>
+        </div>
+
+        <div class="workflow-section">
+          <h2>Single-Repo Work</h2>
+          <div class="workflow-steps">
+            <div class="workflow-step">
+              <span class="workflow-step__num">1</span>
+              <div>
+                <code>/ralph --issues 42,43</code>
+                <span class="text-muted">Build features from GitHub issues</span>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <span class="workflow-step__num">2</span>
+              <div>
+                <code>/qa</code>
+                <span class="text-muted">Scan and fix quality issues</span>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <span class="workflow-step__num">3</span>
+              <div>
+                <code>/verify</code>
+                <span class="text-muted">Run tests + lint</span>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <span class="workflow-step__num">4</span>
+              <div>
+                <code>/ship-day</code>
+                <span class="text-muted">Squash commits + create PR</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="workflow-section">
+          <h2>Multi-Repo Workspace</h2>
+          <p class="text-muted">For workspaces with <code>.claude-workspace.json</code> (e.g., multiple repos under one parent directory).</p>
+
+          <div class="workflow-steps">
+            <div class="workflow-step">
+              <span class="workflow-step__num">1</span>
+              <div>
+                <strong>Deep-dive from workspace root</strong>
+                <pre class="code-block">cd ~/som/contracts/game
+claude
+&gt; /deep-dive</pre>
+                <span class="text-muted">Reads .claude-workspace.json, explores all repos, understands architecture. Creates planning issue with sub-issues split per repo.</span>
+              </div>
+            </div>
+            <div class="workflow-step">
+              <span class="workflow-step__num">2</span>
+              <div>
+                <strong>Ralph per individual repo</strong>
+                <pre class="code-block"># Terminal 1
+cd ~/som/contracts/game/game
+claude
+&gt; /ralph --issues 159,160,161,162
+
+# Terminal 2 (parallel if independent)
+cd ~/som/contracts/game/web3-backend
+claude
+&gt; /ralph --issues 184</pre>
+                <span class="text-muted">Each repo gets its own Claude session with focused implementation.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="workflow-section">
+          <h2>Planning Issue Structure</h2>
+          <p class="text-muted">Parent issues in the planning repo follow this pattern:</p>
+          <div class="workflow-pattern">
+            <div><span class="badge badge--global">1</span> <strong>Summary</strong> &mdash; describe the bug/feature holistically</div>
+            <div><span class="badge badge--global">2</span> <strong>Investigation</strong> &mdash; root cause analysis, layer-by-layer breakdown</div>
+            <div><span class="badge badge--global">3</span> <strong>Comparison</strong> &mdash; current vs target behavior table</div>
+            <div><span class="badge badge--global">4</span> <strong>Sub-Issues</strong> &mdash; split by repo with execution phases</div>
+            <div><span class="badge badge--global">5</span> <strong>Dependency Chain</strong> &mdash; order and parallelism diagram</div>
+          </div>
+          <pre class="code-block">game:          #158 (test) &rarr; #157 (fix) &rarr; PR
+web3-backend:  #184 (test) &rarr; PR              (parallel, independent)</pre>
+        </div>
+
+        <div class="workflow-section">
+          <h2>Available Commands</h2>
+          <table>
+            <thead>
+              <tr><th>Command</th><th>Purpose</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="text-mono">/ralph</td><td>Feature builder with TDD, subagents, and approval gates</td></tr>
+              <tr><td class="text-mono">/qa</td><td>Three-phase quality scan: parallel scan, triage, fix</td></tr>
+              <tr><td class="text-mono">/verify</td><td>Run tests + lint + type-check</td></tr>
+              <tr><td class="text-mono">/plan</td><td>Implementation planning with risk analysis</td></tr>
+              <tr><td class="text-mono">/code-review</td><td>Review changes for correctness, security, style</td></tr>
+              <tr><td class="text-mono">/security</td><td>OWASP-focused security analysis</td></tr>
+              <tr><td class="text-mono">/build-fix</td><td>Diagnose and fix build errors</td></tr>
+              <tr><td class="text-mono">/refactor-clean</td><td>Dead code removal and consolidation</td></tr>
+              <tr><td class="text-mono">/checkpoint</td><td>Save progress state</td></tr>
+              <tr><td class="text-mono">/learn</td><td>Extract patterns from current session</td></tr>
+              <tr><td class="text-mono">/search</td><td>Semantic search via LEANN index</td></tr>
+              <tr><td class="text-mono">/ship-day</td><td>Squash commits and create PR</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="workflow-section">
+          <h2>Continuous Learning</h2>
+          <p class="text-muted">The toolkit learns automatically across sessions &mdash; no manual intervention needed.</p>
+
+          <h3 style="margin-top:12px;font-size:14px;color:#e2e8f0;">Three Learning Layers</h3>
+          <table>
+            <thead>
+              <tr><th>Layer</th><th>Mechanism</th><th>Scope</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-mono">Auto-Memory</td>
+                <td>Claude's built-in memory files (<code>~/.claude/projects/*/memory/</code>)</td>
+                <td>Per-project, persists across conversations</td>
+              </tr>
+              <tr>
+                <td class="text-mono">Event Learning</td>
+                <td>Evolution engine detects patterns as events arrive (<code>OnEvent</code>)</td>
+                <td>Cross-project, stored in shared SQLite DB</td>
+              </tr>
+              <tr>
+                <td class="text-mono">Session Learning</td>
+                <td>Mini evolution cycle at session end (<code>OnSessionEnd</code>)</td>
+                <td>Cross-project, auto-deprecates weak rules</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3 style="margin-top:16px;font-size:14px;color:#e2e8f0;">How Pattern Detection Works</h3>
+          <div class="workflow-pattern">
+            <div><span class="badge badge--global">1</span> <strong>Event arrives</strong> &mdash; log_event, log_stuck, or log_blocked</div>
+            <div><span class="badge badge--global">2</span> <strong>Count matches</strong> &mdash; same (type, result, details) across recent sessions</div>
+            <div><span class="badge badge--global">3</span> <strong>Check threshold</strong> &mdash; failures &ge; 3, stuck/blocked &ge; 2, verification &ge; 2</div>
+            <div><span class="badge badge--global">4</span> <strong>Auto-propose</strong> &mdash; creates an improvement with scope promotion</div>
+          </div>
+          <table style="margin-top:12px;">
+            <thead>
+              <tr><th>Pattern</th><th>Threshold</th><th>Example</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-mono">repeated_failure</td>
+                <td>3+ occurrences</td>
+                <td>Same build error across sessions</td>
+              </tr>
+              <tr>
+                <td class="text-mono">recurring_stuck</td>
+                <td>2+ occurrences</td>
+                <td>Stuck on the same type of problem</td>
+              </tr>
+              <tr>
+                <td class="text-mono">verification_failure</td>
+                <td>2+ occurrences</td>
+                <td>Same test/lint check keeps failing</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="text-muted" style="margin-top:8px;">
+            <strong>Scope promotion:</strong> Pattern in 1 project &rarr; project-scope rule. Pattern across 2+ projects &rarr; global rule.
+            <br>
+            <strong>Deduplication:</strong> Keyed by <code>type:result:details</code> &mdash; won't propose the same improvement twice.
+            <br>
+            <strong>Auto-deprecation:</strong> Rules scoring below 0.3 effectiveness after 5+ scores are automatically removed.
+          </p>
+        </div>
+
+        <div class="workflow-section">
+          <h2>MCP Architecture</h2>
+          <table>
+            <thead>
+              <tr><th>Scope</th><th>File</th><th>Servers</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="badge badge--global">user</span></td>
+                <td class="text-mono">~/.claude.json</td>
+                <td>claude-toolkit, deep-think, leann-server, context7</td>
+              </tr>
+              <tr>
+                <td><span class="badge badge--project">project</span></td>
+                <td class="text-mono">&lt;repo&gt;/.mcp.json</td>
+                <td>Repo-specific only (e.g., unity-mcp, playwright)</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="text-muted" style="margin-top:8px;">
+            <strong>Dashboard:</strong> <a href="http://127.0.0.1:19280" style="color:#6366f1;">http://127.0.0.1:19280</a> &mdash; fixed port, shared SQLite DB across all sessions. If the port is already taken by another session, it silently skips (same DB).
+          </p>
+          <p class="text-muted" style="margin-top:4px;">
+            <strong>Hooks:</strong> Telemetry is handled in-process via MCP tool calls &mdash; no shell hooks needed. The <code>hooks.json</code> template is empty by default.
+          </p>
+        </div>
+
+      </div>
+    </template>
+
     <!-- Audit page -->
     <template x-if="page === 'audit'">
       <div>
@@ -477,6 +707,7 @@ function app() {
         patrol:       'Patrol',
         improvements: 'Improvements',
         audit:        'Audit',
+        workflow:     'Workflow Guide',
       };
       return titles[this.page] || 'Dashboard';
     },

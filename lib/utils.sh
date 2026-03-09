@@ -52,32 +52,42 @@ append_gitignore() {
   done < "$entries_file"
 }
 
-# Merge hooks.json: add new hook events without overwriting existing ones
+# Merge hooks.json: toolkit hooks are tagged with _toolkit:true.
+# On update: remove old toolkit hooks, then add current template hooks.
+# User-added hooks (no _toolkit marker) are always preserved.
 merge_hooks_json() {
   local target="$1" source_file="$2"
 
   if [ ! -f "$target" ]; then
     mkdir -p "$(dirname "$target")"
-    cp "$source_file" "$target"
+    # Tag all template hooks as toolkit-managed
+    jq '
+      .hooks |= with_entries(
+        .value |= map(. + {"_toolkit": true})
+      )
+    ' "$source_file" > "$target"
     return
   fi
 
-  # For each hook event in source, only add if the event doesn't already have
-  # an entry with the same matcher
   local tmp_file
   tmp_file="$(mktemp)"
 
   jq -s '
-    .[0] as $existing |
-    .[1] as $new |
-    $existing | .hooks as $eh |
+    # Step 1: Strip all _toolkit entries from existing hooks
+    (.[0] | .hooks |= with_entries(
+      .value |= map(select(._toolkit != true))
+    ) | .hooks |= with_entries(select(.value | length > 0))) as $cleaned |
+
+    # Step 2: Tag template hooks as toolkit-managed
+    (.[1] | .hooks |= with_entries(
+      .value |= map(. + {"_toolkit": true})
+    )) as $new |
+
+    # Step 3: Merge — add template hooks alongside user hooks
+    $cleaned |
     reduce ($new.hooks | to_entries[]) as $entry (
-      $existing;
-      if ($eh[$entry.key] // [] | map(.matcher) | index($entry.value[0].matcher)) then
-        .
-      else
-        .hooks[$entry.key] = (($eh[$entry.key] // []) + $entry.value)
-      end
+      .;
+      .hooks[$entry.key] = ((.hooks[$entry.key] // []) + $entry.value)
     )
   ' "$target" "$source_file" > "$tmp_file" && mv "$tmp_file" "$target"
 }

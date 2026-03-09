@@ -247,12 +247,30 @@ if [ "$MODE" = "uninstall" ]; then
   fi
 
   # Remove toolkit-generated config files
-  for f in .claude-toolkit.json .deep-think.json .mcp.json; do
+  for f in .claude-toolkit.json .deep-think.json; do
     if [ -f "$PROJECT_DIR/$f" ]; then
       rm "$PROJECT_DIR/$f"
       info "Removed $f"
     fi
   done
+
+  # Remove project .mcp.json only if it contains exclusively toolkit-managed servers
+  if [ -f "$PROJECT_DIR/.mcp.json" ]; then
+    rm "$PROJECT_DIR/.mcp.json"
+    info "Removed .mcp.json"
+  fi
+
+  # Remove toolkit servers from user-scope ~/.claude.json
+  USER_MCP="$HOME/.claude.json"
+  if [ -f "$USER_MCP" ]; then
+    for srv in claude-toolkit deep-think leann-server context7; do
+      if jq -e ".mcpServers.\"$srv\"" "$USER_MCP" &>/dev/null; then
+        jq "del(.mcpServers.\"$srv\")" "$USER_MCP" > "$USER_MCP.tmp" && mv "$USER_MCP.tmp" "$USER_MCP"
+      fi
+    done
+    REMAINING=$(jq -r '.mcpServers | keys | join(", ")' "$USER_MCP" 2>/dev/null)
+    info "~/.claude.json — removed toolkit servers (remaining: $REMAINING)"
+  fi
 
   # Remove hooks.json (installed via merge, not tracked in managedFiles)
   if [ -f "$PROJECT_DIR/.claude/hooks/hooks.json" ]; then
@@ -588,29 +606,38 @@ else
   warn "Agents: skipped"
 fi
 
-# .mcp.json — merge servers
-# claude-toolkit-server (V4 core)
+# ── User-scope MCP servers (~/.claude.json) ──
+# Global servers that are the same everywhere go to user scope.
+# Claude Code reads user MCPs from ~/.claude.json under .mcpServers key.
+USER_MCP="$HOME/.claude.json"
+
 if [ -x "$SERVER_BIN" ]; then
-  merge_mcp_server "$PROJECT_DIR/.mcp.json" "claude-toolkit-server" "{\"command\":\"$SERVER_BIN\",\"args\":[]}"
-  info ".mcp.json — claude-toolkit-server added"
+  merge_mcp_server "$USER_MCP" "claude-toolkit" "{\"command\":\"$SERVER_BIN\",\"args\":[]}"
+fi
+merge_mcp_server "$USER_MCP" "deep-think" '{"command":"mcp-deep-think","args":[]}'
+
+if [ "$INSTALL_LEANN" = true ]; then
+  merge_mcp_server "$USER_MCP" "leann-server" '{"command":"leann_mcp","args":[]}'
 fi
 
-install_mcp_config "$PROJECT_DIR" "deep-think"
+if [ "$INSTALL_CONTEXT7" = true ]; then
+  merge_mcp_server "$USER_MCP" "context7" '{"command":"npx","args":["-y","@upstash/context7-mcp@latest"]}'
+fi
 
+USER_MCPS=$(jq -r '.mcpServers | keys | join(", ")' "$USER_MCP" 2>/dev/null)
+info "~/.claude.json (user scope) — $USER_MCPS"
+
+# ── Project-scope MCP servers (.mcp.json) ──
+# Only project-specific servers go here (e.g., playwright for UI projects).
 if [ "$INSTALL_PLAYWRIGHT" = true ]; then
   install_mcp_config "$PROJECT_DIR" "playwright"
 fi
 
-if [ "$INSTALL_LEANN" = true ]; then
-  install_mcp_config "$PROJECT_DIR" "leann-server"
+# Report project-scope MCPs (may be empty if no project-specific servers)
+if [ -f "$PROJECT_DIR/.mcp.json" ]; then
+  PROJECT_MCPS=$(jq -r '.mcpServers | keys | join(", ")' "$PROJECT_DIR/.mcp.json" 2>/dev/null)
+  [ -n "$PROJECT_MCPS" ] && info ".mcp.json (project scope) — $PROJECT_MCPS"
 fi
-
-if [ "$INSTALL_CONTEXT7" = true ]; then
-  install_mcp_config "$PROJECT_DIR" "context7"
-fi
-
-INSTALLED_MCPS=$(jq -r '.mcpServers | keys | join(", ")' "$PROJECT_DIR/.mcp.json" 2>/dev/null)
-info ".mcp.json — servers: $INSTALLED_MCPS"
 
 # .deep-think.json
 _tracked_copy "$TEMPLATES/deep-think.json" "$PROJECT_DIR/.deep-think.json" ".deep-think.json"

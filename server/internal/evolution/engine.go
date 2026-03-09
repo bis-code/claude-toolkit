@@ -55,6 +55,140 @@ func (t *patternTracker) addProject(project string) {
 	t.projects = append(t.projects, project)
 }
 
+// Insight represents a learning that was auto-detected and persisted.
+type Insight struct {
+	ImprovementID string `json:"improvement_id,omitempty"`
+	Pattern       string `json:"pattern"`
+	Message       string `json:"message"`
+}
+
+// OnEvent is called after every event is stored. It checks whether the new event
+// crosses a pattern threshold and, if so, auto-proposes an improvement.
+// This makes learning continuous — no manual /learn needed.
+func (e *Engine) OnEvent(event *db.Event, project string) *Insight {
+	if event.Details == "" {
+		return nil
+	}
+
+	// Count how many times we've seen this same (type, result, details) combo
+	// across recent sessions.
+	count, err := e.store.CountMatchingEvents(event.Type, event.Result, event.Details, 20)
+	if err != nil || count == 0 {
+		return nil
+	}
+
+	// Determine threshold based on event severity.
+	threshold := 3
+	switch {
+	case event.Type == "verification" && event.Result == "failed":
+		threshold = 2
+	case event.Type == "stuck" || event.Type == "blocked":
+		threshold = 2
+	case event.Result == "failure":
+		threshold = 3
+	default:
+		return nil // Only learn from negative signals
+	}
+
+	if count < threshold {
+		return nil
+	}
+
+	// Check if we already proposed an improvement for this exact pattern.
+	existingKey := fmt.Sprintf("%s:%s:%s", event.Type, event.Result, event.Details)
+	if e.store.ImprovementExistsForEvidence(existingKey) {
+		return nil
+	}
+
+	// Build a pattern and propose a rule.
+	patternType := "repeated_failure"
+	if event.Type == "stuck" || event.Type == "blocked" {
+		patternType = "recurring_stuck"
+	} else if event.Type == "verification" {
+		patternType = "verification_failure"
+	}
+
+	p := Pattern{
+		Type:      patternType,
+		Details:   event.Details,
+		Frequency: count,
+		Projects:  []string{project},
+	}
+
+	imp := e.ProposeRule(p)
+	if imp == nil {
+		return nil
+	}
+	imp.Evidence = existingKey
+
+	dbImp := &db.Improvement{
+		ID:         imp.ID,
+		Content:    imp.Content,
+		Scope:      imp.Scope,
+		Project:    imp.Project,
+		Tags:       imp.Tags,
+		Evidence:   imp.Evidence,
+		Confidence: imp.Confidence,
+		Status:     "pending",
+	}
+	if err := e.store.CreateImprovement(dbImp); err != nil {
+		return nil
+	}
+
+	return &Insight{
+		ImprovementID: imp.ID,
+		Pattern:       patternType,
+		Message:       imp.Content,
+	}
+}
+
+// OnSessionEnd runs a mini evolution cycle for the completed session.
+// It also auto-deprecates any rules below threshold.
+func (e *Engine) OnSessionEnd(project string) []Insight {
+	patterns, err := e.DetectPatterns(project, 10)
+	if err != nil || len(patterns) == 0 {
+		return nil
+	}
+
+	var insights []Insight
+	for _, p := range patterns {
+		existingKey := fmt.Sprintf("%s:%s:%s", p.Type, "", p.Details)
+		if e.store.ImprovementExistsForEvidence(existingKey) {
+			continue
+		}
+
+		imp := e.ProposeRule(p)
+		if imp == nil {
+			continue
+		}
+		imp.Evidence = existingKey
+
+		dbImp := &db.Improvement{
+			ID:         imp.ID,
+			Content:    imp.Content,
+			Scope:      imp.Scope,
+			Project:    imp.Project,
+			Tags:       imp.Tags,
+			Evidence:   imp.Evidence,
+			Confidence: imp.Confidence,
+			Status:     "pending",
+		}
+		if err := e.store.CreateImprovement(dbImp); err != nil {
+			continue
+		}
+		insights = append(insights, Insight{
+			ImprovementID: imp.ID,
+			Pattern:       p.Type,
+			Message:       imp.Content,
+		})
+	}
+
+	// Auto-deprecate weak rules.
+	_, _ = e.store.DeprecateLowScoreRules(0.3, 5)
+
+	return insights
+}
+
 // DetectPatterns analyzes recent sessions to find recurring patterns.
 // It looks at the last N sessions (default 20) across all projects or a specific project.
 func (e *Engine) DetectPatterns(project string, sessionLimit int) ([]Pattern, error) {

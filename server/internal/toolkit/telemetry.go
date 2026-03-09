@@ -254,10 +254,22 @@ func (h *handlers) handleLogEvent(_ context.Context, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create event: %v", err)), nil
 	}
 
-	result, _ := json.Marshal(map[string]interface{}{
+	resp := map[string]interface{}{
 		"id":      eventID,
 		"message": "event logged",
-	})
+	}
+
+	// Continuous learning: check if this event crosses a pattern threshold.
+	if insight := h.evEngine.OnEvent(event, req.GetString("project", "unknown")); insight != nil {
+		resp["learning"] = map[string]interface{}{
+			"detected":       true,
+			"pattern":        insight.Pattern,
+			"message":        insight.Message,
+			"improvement_id": insight.ImprovementID,
+		}
+	}
+
+	result, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(result)), nil
 }
 
@@ -291,10 +303,20 @@ func (h *handlers) handleLogStuck(_ context.Context, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create stuck event: %v", err)), nil
 	}
 
-	result, _ := json.Marshal(map[string]interface{}{
+	resp := map[string]interface{}{
 		"id":      eventID,
 		"message": "stuck event logged",
-	})
+	}
+	if insight := h.evEngine.OnEvent(event, req.GetString("project", "unknown")); insight != nil {
+		resp["learning"] = map[string]interface{}{
+			"detected":       true,
+			"pattern":        insight.Pattern,
+			"message":        insight.Message,
+			"improvement_id": insight.ImprovementID,
+		}
+	}
+
+	result, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(result)), nil
 }
 
@@ -333,11 +355,21 @@ func (h *handlers) handleLogBlocked(_ context.Context, req mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create blocked event: %v", err)), nil
 	}
 
-	result, _ := json.Marshal(map[string]interface{}{
+	resp := map[string]interface{}{
 		"id":               eventID,
 		"message":          "blocked event logged",
 		"blocked_template": blockedTemplate,
-	})
+	}
+	if insight := h.evEngine.OnEvent(event, req.GetString("project", "unknown")); insight != nil {
+		resp["learning"] = map[string]interface{}{
+			"detected":       true,
+			"pattern":        insight.Pattern,
+			"message":        insight.Message,
+			"improvement_id": insight.ImprovementID,
+		}
+	}
+
+	result, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(result)), nil
 }
 
@@ -358,9 +390,27 @@ func (h *handlers) handleEndSession(_ context.Context, req mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("failed to end session: %v", err)), nil
 	}
 
-	result, _ := json.Marshal(map[string]interface{}{
+	// Look up project from session for evolution cycle.
+	resp := map[string]interface{}{
 		"message": "session ended",
-	})
+	}
+	sessions, _ := h.store.ListSessions("", 1)
+	sessionProject := ""
+	for _, s := range sessions {
+		if s.ID == sessionID {
+			sessionProject = s.Project
+			break
+		}
+	}
+	if sessionProject != "" {
+		insights := h.evEngine.OnSessionEnd(sessionProject)
+		if len(insights) > 0 {
+			resp["learnings"] = insights
+			resp["learnings_count"] = len(insights)
+		}
+	}
+
+	result, _ := json.Marshal(resp)
 	return mcp.NewToolResultText(string(result)), nil
 }
 

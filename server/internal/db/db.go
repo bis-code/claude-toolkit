@@ -819,3 +819,29 @@ func (s *Store) IncrementTasksVerified(sessionID string) error {
 	}
 	return nil
 }
+
+// CountMatchingEvents counts events with matching type, result, and details
+// across the most recent N sessions (by started_at).
+func (s *Store) CountMatchingEvents(eventType, eventResult, details string, sessionLimit int) (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM events e
+		JOIN sessions s ON e.session_id = s.id
+		WHERE e.type = ? AND e.result = ? AND e.details = ?
+		AND s.id IN (SELECT id FROM sessions ORDER BY started_at DESC LIMIT ?)`,
+		eventType, eventResult, details, sessionLimit,
+	).Scan(&count)
+	return count, err
+}
+
+// ImprovementExistsForEvidence checks if a pending or applied improvement
+// already exists with the given evidence key.
+func (s *Store) ImprovementExistsForEvidence(evidence string) bool {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM improvements
+		WHERE evidence = ? AND status IN ('pending', 'applied')`,
+		evidence,
+	).Scan(&count)
+	return err == nil && count > 0
+}
