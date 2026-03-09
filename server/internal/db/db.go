@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -45,12 +46,38 @@ CREATE TABLE IF NOT EXISTS rule_scores (
 
 CREATE INDEX IF NOT EXISTS idx_rule_scores_rule_id ON rule_scores(rule_id);
 
+CREATE TABLE IF NOT EXISTS sessions (
+	id TEXT PRIMARY KEY,
+	project TEXT NOT NULL,
+	started_at TEXT NOT NULL,
+	ended_at TEXT,
+	summary TEXT DEFAULT '',
+	confidence REAL DEFAULT 0,
+	tasks_completed INTEGER DEFAULT 0,
+	tasks_failed INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+
+CREATE TABLE IF NOT EXISTS events (
+	id TEXT PRIMARY KEY,
+	session_id TEXT NOT NULL,
+	type TEXT NOT NULL,
+	result TEXT NOT NULL DEFAULT '',
+	details TEXT DEFAULT '',
+	context TEXT DEFAULT '',
+	timestamp TEXT NOT NULL,
+	FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
+CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+
 CREATE TABLE IF NOT EXISTS schema_version (
 	version INTEGER PRIMARY KEY
 );
 `
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 // Store provides database operations for the toolkit.
 type Store struct {
@@ -73,6 +100,29 @@ type Rule struct {
 	CreatedAt      time.Time         `json:"created_at"`
 	UpdatedAt      time.Time         `json:"updated_at"`
 	Deprecated     bool              `json:"deprecated"`
+}
+
+// Session represents a Claude session in the database.
+type Session struct {
+	ID             string     `json:"id"`
+	Project        string     `json:"project"`
+	StartedAt      time.Time  `json:"started_at"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	Summary        string     `json:"summary,omitempty"`
+	Confidence     float64    `json:"confidence,omitempty"`
+	TasksCompleted int        `json:"tasks_completed"`
+	TasksFailed    int        `json:"tasks_failed"`
+}
+
+// Event represents a telemetry event in the database.
+type Event struct {
+	ID        string    `json:"id"`
+	SessionID string    `json:"session_id"`
+	Type      string    `json:"type"`
+	Result    string    `json:"result"`
+	Details   string    `json:"details,omitempty"`
+	Context   string    `json:"context,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // NewStore creates a new Store with the given database path.
@@ -130,7 +180,39 @@ func migrate(db *sql.DB) error {
 		return nil
 	}
 
-	// Future migrations go here
+	// Migration v2: Add sessions and events tables
+	if version < 2 {
+		migration := `
+CREATE TABLE IF NOT EXISTS sessions (
+	id TEXT PRIMARY KEY,
+	project TEXT NOT NULL,
+	started_at TEXT NOT NULL,
+	ended_at TEXT,
+	summary TEXT DEFAULT '',
+	confidence REAL DEFAULT 0,
+	tasks_completed INTEGER DEFAULT 0,
+	tasks_failed INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+CREATE TABLE IF NOT EXISTS events (
+	id TEXT PRIMARY KEY,
+	session_id TEXT NOT NULL,
+	type TEXT NOT NULL,
+	result TEXT NOT NULL DEFAULT '',
+	details TEXT DEFAULT '',
+	context TEXT DEFAULT '',
+	timestamp TEXT NOT NULL,
+	FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
+CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+UPDATE schema_version SET version = 2;`
+		if _, err := db.Exec(migration); err != nil {
+			return fmt.Errorf("migration v2 failed: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -347,6 +429,162 @@ func (s *Store) RecordScore(ruleID string, helpful bool, context, sessionID stri
 	}
 
 	return err
+}
+
+// CreateSession inserts a new session into the database.
+func (s *Store) CreateSession(session *Session) error {
+	_, err := s.db.Exec(`
+		INSERT INTO sessions (id, project, started_at, summary, confidence, tasks_completed, tasks_failed)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.Project,
+		session.StartedAt.Format(time.RFC3339),
+		session.Summary, session.Confidence,
+		session.TasksCompleted, session.TasksFailed,
+	)
+	return err
+}
+
+// GetSession retrieves a session by ID.
+func (s *Store) GetSession(id string) (*Session, error) {
+	sess := &Session{}
+	var startedAt string
+	var endedAt sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, project, started_at, ended_at, summary, confidence, tasks_completed, tasks_failed
+		FROM sessions WHERE id = ?`, id).Scan(
+		&sess.ID, &sess.Project, &startedAt, &endedAt,
+		&sess.Summary, &sess.Confidence,
+		&sess.TasksCompleted, &sess.TasksFailed,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	sess.StartedAt, _ = time.Parse(time.RFC3339, startedAt)
+	if endedAt.Valid {
+		t, _ := time.Parse(time.RFC3339, endedAt.String)
+		sess.EndedAt = &t
+	}
+
+	return sess, nil
+}
+
+// EndSession marks a session as ended with summary data.
+func (s *Store) EndSession(id string, summary string, confidence float64, tasksCompleted, tasksFailed int) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE sessions SET ended_at=?, summary=?, confidence=?, tasks_completed=?, tasks_failed=?
+		WHERE id=?`,
+		now, summary, confidence, tasksCompleted, tasksFailed, id,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("session %q not found", id)
+	}
+	return nil
+}
+
+// CreateEvent inserts a new event into the database.
+func (s *Store) CreateEvent(event *Event) error {
+	_, err := s.db.Exec(`
+		INSERT INTO events (id, session_id, type, result, details, context, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		event.ID, event.SessionID, event.Type, event.Result,
+		event.Details, event.Context,
+		event.Timestamp.Format(time.RFC3339),
+	)
+	return err
+}
+
+// ListEvents returns all events for a given session, ordered by timestamp.
+func (s *Store) ListEvents(sessionID string) ([]*Event, error) {
+	rows, err := s.db.Query(`
+		SELECT id, session_id, type, result, details, context, timestamp
+		FROM events WHERE session_id = ? ORDER BY timestamp ASC`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*Event
+	for rows.Next() {
+		e := &Event{}
+		var ts string
+		err := rows.Scan(&e.ID, &e.SessionID, &e.Type, &e.Result, &e.Details, &e.Context, &ts)
+		if err != nil {
+			return nil, err
+		}
+		e.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+// ListSessions returns sessions, optionally filtered by project, ordered by started_at DESC.
+func (s *Store) ListSessions(project string, limit int) ([]*Session, error) {
+	query := "SELECT id, project, started_at, ended_at, summary, confidence, tasks_completed, tasks_failed FROM sessions"
+	args := []interface{}{}
+
+	if project != "" {
+		query += " WHERE project = ?"
+		args = append(args, project)
+	}
+
+	query += " ORDER BY started_at DESC"
+
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []*Session
+	for rows.Next() {
+		sess := &Session{}
+		var startedAt string
+		var endedAt sql.NullString
+
+		err := rows.Scan(
+			&sess.ID, &sess.Project, &startedAt, &endedAt,
+			&sess.Summary, &sess.Confidence,
+			&sess.TasksCompleted, &sess.TasksFailed,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		sess.StartedAt, _ = time.Parse(time.RFC3339, startedAt)
+		if endedAt.Valid {
+			t, _ := time.Parse(time.RFC3339, endedAt.String)
+			sess.EndedAt = &t
+		}
+
+		sessions = append(sessions, sess)
+	}
+	return sessions, rows.Err()
+}
+
+// PurgeOldEvents deletes events older than the specified retention period.
+func (s *Store) PurgeOldEvents(retentionDays int) (int64, error) {
+	if retentionDays <= 0 {
+		return 0, fmt.Errorf("retentionDays must be positive, got %d", retentionDays)
+	}
+	cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour).Format(time.RFC3339)
+	result, err := s.db.Exec("DELETE FROM events WHERE timestamp < ?", cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("purge failed: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 func boolToInt(b bool) int {

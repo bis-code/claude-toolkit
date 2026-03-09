@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/bis-code/claude-toolkit/server/internal/db"
 )
@@ -269,5 +270,271 @@ func TestCreateRule_WithTags(t *testing.T) {
 	}
 	if got.Tags["tech_stack"][0] != "unity" {
 		t.Errorf("expected first tech_stack tag to be 'unity', got %q", got.Tags["tech_stack"][0])
+	}
+}
+
+// --- Session & Event tests ---
+
+func TestCreateSession(t *testing.T) {
+	store := setupStore(t)
+
+	session := &db.Session{
+		ID:        "sess-001",
+		Project:   "my-project",
+		StartedAt: time.Now().UTC(),
+	}
+
+	if err := store.CreateSession(session); err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+
+	got, err := store.GetSession("sess-001")
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+
+	if got.ID != "sess-001" {
+		t.Errorf("id = %q, want %q", got.ID, "sess-001")
+	}
+	if got.Project != "my-project" {
+		t.Errorf("project = %q, want %q", got.Project, "my-project")
+	}
+	if got.EndedAt != nil {
+		t.Errorf("ended_at should be nil for new session, got %v", got.EndedAt)
+	}
+	if got.TasksCompleted != 0 {
+		t.Errorf("tasks_completed = %d, want 0", got.TasksCompleted)
+	}
+}
+
+func TestGetSession_NotFound(t *testing.T) {
+	store := setupStore(t)
+
+	_, err := store.GetSession("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent session, got nil")
+	}
+}
+
+func TestEndSession(t *testing.T) {
+	store := setupStore(t)
+
+	session := &db.Session{
+		ID:        "sess-end-001",
+		Project:   "my-project",
+		StartedAt: time.Now().UTC(),
+	}
+	store.CreateSession(session)
+
+	err := store.EndSession("sess-end-001", "Did great work", 0.95, 5, 1)
+	if err != nil {
+		t.Fatalf("EndSession failed: %v", err)
+	}
+
+	got, err := store.GetSession("sess-end-001")
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+
+	if got.EndedAt == nil {
+		t.Fatal("ended_at should not be nil after EndSession")
+	}
+	if got.Summary != "Did great work" {
+		t.Errorf("summary = %q, want %q", got.Summary, "Did great work")
+	}
+	if got.Confidence != 0.95 {
+		t.Errorf("confidence = %f, want 0.95", got.Confidence)
+	}
+	if got.TasksCompleted != 5 {
+		t.Errorf("tasks_completed = %d, want 5", got.TasksCompleted)
+	}
+	if got.TasksFailed != 1 {
+		t.Errorf("tasks_failed = %d, want 1", got.TasksFailed)
+	}
+}
+
+func TestEndSession_NotFound(t *testing.T) {
+	store := setupStore(t)
+
+	err := store.EndSession("nonexistent", "summary", 0.5, 1, 0)
+	if err == nil {
+		t.Error("expected error for nonexistent session, got nil")
+	}
+}
+
+func TestCreateEvent(t *testing.T) {
+	store := setupStore(t)
+
+	session := &db.Session{
+		ID:        "sess-evt-001",
+		Project:   "my-project",
+		StartedAt: time.Now().UTC(),
+	}
+	store.CreateSession(session)
+
+	event := &db.Event{
+		ID:        "evt-001",
+		SessionID: "sess-evt-001",
+		Type:      "tool_call",
+		Result:    "success",
+		Details:   "Called CreateRule",
+		Context:   "testing",
+		Timestamp: time.Now().UTC(),
+	}
+
+	if err := store.CreateEvent(event); err != nil {
+		t.Fatalf("CreateEvent failed: %v", err)
+	}
+
+	events, err := store.ListEvents("sess-evt-001")
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].ID != "evt-001" {
+		t.Errorf("event id = %q, want %q", events[0].ID, "evt-001")
+	}
+	if events[0].Type != "tool_call" {
+		t.Errorf("event type = %q, want %q", events[0].Type, "tool_call")
+	}
+	if events[0].Result != "success" {
+		t.Errorf("event result = %q, want %q", events[0].Result, "success")
+	}
+}
+
+func TestListEvents(t *testing.T) {
+	store := setupStore(t)
+
+	store.CreateSession(&db.Session{
+		ID: "sess-list-001", Project: "proj", StartedAt: time.Now().UTC(),
+	})
+	store.CreateSession(&db.Session{
+		ID: "sess-list-002", Project: "proj", StartedAt: time.Now().UTC(),
+	})
+
+	// Create events for session 1
+	store.CreateEvent(&db.Event{
+		ID: "evt-a", SessionID: "sess-list-001", Type: "tool_call",
+		Result: "success", Timestamp: time.Now().UTC(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "evt-b", SessionID: "sess-list-001", Type: "error",
+		Result: "failure", Timestamp: time.Now().UTC(),
+	})
+
+	// Create event for session 2
+	store.CreateEvent(&db.Event{
+		ID: "evt-c", SessionID: "sess-list-002", Type: "tool_call",
+		Result: "success", Timestamp: time.Now().UTC(),
+	})
+
+	events, err := store.ListEvents("sess-list-001")
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Errorf("expected 2 events for session 1, got %d", len(events))
+	}
+
+	events2, err := store.ListEvents("sess-list-002")
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events2) != 1 {
+		t.Errorf("expected 1 event for session 2, got %d", len(events2))
+	}
+}
+
+func TestListSessions(t *testing.T) {
+	store := setupStore(t)
+
+	// Create sessions with different projects and times
+	store.CreateSession(&db.Session{
+		ID: "sess-ls-001", Project: "proj-a",
+		StartedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+	})
+	store.CreateSession(&db.Session{
+		ID: "sess-ls-002", Project: "proj-a",
+		StartedAt: time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC),
+	})
+	store.CreateSession(&db.Session{
+		ID: "sess-ls-003", Project: "proj-b",
+		StartedAt: time.Date(2026, 1, 3, 10, 0, 0, 0, time.UTC),
+	})
+
+	// Filter by project
+	sessions, err := store.ListSessions("proj-a", 10)
+	if err != nil {
+		t.Fatalf("ListSessions failed: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Errorf("expected 2 sessions for proj-a, got %d", len(sessions))
+	}
+
+	// Verify ordering (newest first)
+	if len(sessions) == 2 && sessions[0].ID != "sess-ls-002" {
+		t.Errorf("expected newest session first (sess-ls-002), got %s", sessions[0].ID)
+	}
+
+	// No filter — all sessions
+	all, err := store.ListSessions("", 10)
+	if err != nil {
+		t.Fatalf("ListSessions failed: %v", err)
+	}
+	if len(all) != 3 {
+		t.Errorf("expected 3 sessions total, got %d", len(all))
+	}
+
+	// Test limit
+	limited, err := store.ListSessions("", 2)
+	if err != nil {
+		t.Fatalf("ListSessions failed: %v", err)
+	}
+	if len(limited) != 2 {
+		t.Errorf("expected 2 sessions with limit=2, got %d", len(limited))
+	}
+}
+
+func TestPurgeOldEvents(t *testing.T) {
+	store := setupStore(t)
+
+	store.CreateSession(&db.Session{
+		ID: "sess-purge", Project: "proj", StartedAt: time.Now().UTC(),
+	})
+
+	// Create an old event (60 days ago)
+	oldTime := time.Now().UTC().Add(-60 * 24 * time.Hour)
+	store.CreateEvent(&db.Event{
+		ID: "evt-old", SessionID: "sess-purge", Type: "tool_call",
+		Result: "success", Timestamp: oldTime,
+	})
+
+	// Create a recent event
+	store.CreateEvent(&db.Event{
+		ID: "evt-new", SessionID: "sess-purge", Type: "tool_call",
+		Result: "success", Timestamp: time.Now().UTC(),
+	})
+
+	// Purge events older than 30 days
+	deleted, err := store.PurgeOldEvents(30)
+	if err != nil {
+		t.Fatalf("PurgeOldEvents failed: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("expected 1 deleted event, got %d", deleted)
+	}
+
+	// Verify only the new event remains
+	events, err := store.ListEvents("sess-purge")
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Errorf("expected 1 remaining event, got %d", len(events))
+	}
+	if events[0].ID != "evt-new" {
+		t.Errorf("expected remaining event to be evt-new, got %s", events[0].ID)
 	}
 }
