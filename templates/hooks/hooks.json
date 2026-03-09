@@ -20,6 +20,26 @@
             "command": "# Optional: Auto-format reminder after file writes\n# Uncomment and customize for your formatter:\n# FILE=$(echo \"$TOOL_INPUT\" | jq -r '.file_path // .filePath // empty' 2>/dev/null)\n# if [ -n \"$FILE\" ]; then\n#   case \"$FILE\" in\n#     *.ts|*.tsx|*.js|*.jsx) npx prettier --write \"$FILE\" 2>/dev/null ;;\n#     *.go) gofmt -w \"$FILE\" 2>/dev/null ;;\n#     *.py) ruff format \"$FILE\" 2>/dev/null ;;\n#   esac\n# fi\nexit 0"
           }
         ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "# V4 Telemetry: Log tool calls to claude-toolkit-server\n# Uncomment to enable automatic telemetry collection.\n# Requires claude-toolkit-server running as an MCP server.\n#\n# TOOL_NAME is set by Claude Code to the tool that was called.\n# TOOL_INPUT contains the JSON input to the tool.\n# TOOL_RESULT_EXIT_CODE is 0 for success, non-zero for failure.\n#\n# SESSION_ID=$(cat /tmp/claude-toolkit-session-id 2>/dev/null || echo \"\")\n# if [ -n \"$SESSION_ID\" ]; then\n#   RESULT=\"success\"\n#   if [ \"${TOOL_RESULT_EXIT_CODE:-0}\" != \"0\" ]; then\n#     RESULT=\"failure\"\n#   fi\n#   claude mcp call claude-toolkit-server toolkit__log_event \\\n#     \"{\\\"session_id\\\": \\\"$SESSION_ID\\\", \\\"type\\\": \\\"tool_call\\\", \\\"result\\\": \\\"$RESULT\\\", \\\"details\\\": \\\"$TOOL_NAME\\\"}\" \\\n#     2>/dev/null || true\n# fi\nexit 0"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "# V4 Telemetry: End session when Claude Code stops\n# Uncomment to enable automatic session ending.\n#\n# SESSION_ID=$(cat /tmp/claude-toolkit-session-id 2>/dev/null || echo \"\")\n# if [ -n \"$SESSION_ID\" ]; then\n#   claude mcp call claude-toolkit-server toolkit__end_session \\\n#     \"{\\\"session_id\\\": \\\"$SESSION_ID\\\", \\\"summary\\\": \\\"Session ended via hook\\\"}\" \\\n#     2>/dev/null || true\n#   rm -f /tmp/claude-toolkit-session-id\n# fi\nexit 0"
+          }
+        ]
       }
     ]
   }
