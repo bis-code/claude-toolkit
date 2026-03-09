@@ -192,6 +192,7 @@ func (h *handlers) registerTools(s *server.MCPServer) {
 		),
 		h.handleScoreRule,
 	)
+	h.registerTelemetryTools(s)
 }
 
 func (h *handlers) handleHealthCheck(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
