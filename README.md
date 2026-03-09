@@ -251,6 +251,205 @@ The toolkit has three layers:
 
 Complex skills like `/ralph` and `/qa` orchestrate multiple agents with approval gates and state management. Simpler skills (e.g., `/code-review`, `/plan`, `/build-fix`) spawn a single paired agent, collect results, and present them to the user.
 
+## V4: Self-Evolving Orchestrator
+
+V4 transforms the toolkit from a static rule installer into a **self-evolving development orchestrator**. A Go-based MCP server becomes the brain — managing dynamic rules, session telemetry, health patrol, and a web dashboard. The toolkit learns from every session and gets smarter over time.
+
+### System Overview
+
+```mermaid
+graph TB
+    subgraph UserMachine["User's Machine"]
+        Installer["install.sh<br/>Downloads binary + templates"]
+        Server["claude-toolkit-server<br/>(Go binary)"]
+        DB[(SQLite<br/>~/.claude-toolkit/store.db)]
+        Dashboard["Web Dashboard<br/>localhost:6565"]
+
+        Installer -->|installs| Server
+        Server <-->|reads/writes| DB
+        Server -->|serves| Dashboard
+    end
+
+    subgraph ClaudeSession["Claude Code Session"]
+        Claude["Claude Code"]
+        Hooks["Tool Hooks<br/>(automatic telemetry)"]
+        Skills["/ralph  /qa  /deep-dive<br/>/retrospective  /rules audit"]
+        Agents["Agents<br/>planner, tdd-guide, reviewer..."]
+
+        Claude --> Skills
+        Skills -->|spawn| Agents
+        Claude --> Hooks
+    end
+
+    subgraph Browser["Browser"]
+        UI["Dashboard UI<br/>Rules · Sessions · Telemetry<br/>Patrol · Evolution · Audit"]
+    end
+
+    Claude <-->|MCP protocol<br/>get_active_rules<br/>log_event<br/>patrol_check| Server
+    Hooks -->|post-tool events| Server
+    Dashboard --> UI
+```
+
+### Rule Engine: 4-Scope Merging
+
+Rules are dynamic, scoped, and served only when relevant. The server merges 4 scopes at query time, substitutes variables, and respects a token budget.
+
+```mermaid
+graph TD
+    subgraph Scopes["Rule Scopes (merged top-down)"]
+        G["🌐 Global<br/>Use conventional commits<br/>TDD is mandatory"]
+        W["🏢 Workspace<br/>ABI changes must update both repos<br/>Shared types live in contracts/"]
+        P["📁 Project<br/>Use Unity Test Framework<br/>Test cmd: dotnet test"]
+        T["🎯 Task<br/>Watch for race conditions<br/>Inventory items validate stack limits"]
+    end
+
+    G --> Merge
+    W --> Merge
+    P --> Merge
+    T --> Merge
+
+    Merge["Merge Engine"]
+
+    Merge --> VarSub["Variable Substitution<br/>{{project_name}} → my-game<br/>{{test_cmd}} → dotnet test<br/>{{tech_stack}} → unity, dotnet"]
+
+    VarSub --> TechFilter["Tech Stack Filter<br/>Unity rules → only Unity projects<br/>Go rules → only Go projects"]
+
+    TechFilter --> TokenBudget["Token Budget<br/>Cap at ~2000 tokens<br/>Highest effectiveness first"]
+
+    TokenBudget --> Sensitivity{"Sensitivity<br/>Check"}
+
+    Sensitivity -->|Clean| Serve["✅ Serve to Claude"]
+    Sensitivity -->|Secrets/PII| Block["🔒 Local-only<br/>Never shared"]
+```
+
+### Telemetry Pipeline
+
+Dual-layer telemetry captures both raw events (automatic via hooks) and structured insights (intentional via MCP calls).
+
+```mermaid
+graph LR
+    subgraph Automatic["Automatic (Hooks)"]
+        ToolCall["Every tool call"]
+        BashCmd["Bash commands"]
+        TestRun["Test runs"]
+        FileEdit["File edits"]
+    end
+
+    subgraph Intentional["Intentional (MCP Calls)"]
+        LogEvent["log_event()"]
+        LogStuck["log_stuck()"]
+        LogBlocked["log_blocked()"]
+        EndSession["end_session()"]
+    end
+
+    ToolCall --> RawStore["Raw Events<br/>(quantitative)"]
+    BashCmd --> RawStore
+    TestRun --> RawStore
+    FileEdit --> RawStore
+
+    LogEvent --> StructStore["Structured Events<br/>(qualitative)"]
+    LogStuck --> StructStore
+    LogBlocked --> StructStore
+    EndSession --> StructStore
+
+    RawStore --> Server["MCP Server"]
+    StructStore --> Server
+
+    Server --> Metrics["Metrics<br/>retries, stuck events<br/>test pass rate"]
+    Server --> Patterns["Pattern Detection<br/>recurring failures<br/>cross-session trends"]
+    Server --> Dashboard2["Dashboard<br/>charts, trends<br/>session history"]
+```
+
+### Patrol: Health Monitoring
+
+The patrol system analyzes telemetry in real-time to detect stuck loops, test spirals, and thrashing. Claude calls `patrol_check()` periodically.
+
+```mermaid
+graph TD
+    Events["Telemetry Events"] --> Analyzer["Patrol Analyzer"]
+
+    Analyzer --> RetryLoop{"Same command<br/>failed 3+ times?"}
+    Analyzer --> TestSpiral{"Same test<br/>failing 5+ times?"}
+    Analyzer --> Thrashing{"Same file edited<br/>back and forth?"}
+    Analyzer --> Stale{"No progress in<br/>10+ tool calls?"}
+    Analyzer --> Rework{"Task sent back<br/>3+ times?"}
+
+    RetryLoop -->|yes| Warning["⚠️ Warning"]
+    TestSpiral -->|yes| Warning
+    Thrashing -->|yes| Warning
+    Stale -->|yes| Warning
+    Rework -->|yes| Critical["🚨 Critical"]
+
+    Warning --> Alert["patrol_check() returns:<br/>status, alert, suggestion,<br/>blocked_log_template"]
+    Critical --> Alert
+
+    Alert --> Claude3["Claude receives alert<br/>→ tries alternative approach<br/>→ or logs blocked event"]
+```
+
+### Self-Evolution Loop
+
+The toolkit continuously learns from sessions. Patterns auto-promote to rules. Low-performing rules auto-deprecate.
+
+```mermaid
+graph TD
+    Sessions["Sessions (across all projects)"] --> Telemetry3["Telemetry Data"]
+
+    Telemetry3 --> PatternDetect["Pattern Detection<br/>Same problem in 3+ sessions?<br/>Same resolution every time?"]
+
+    PatternDetect -->|Pattern found| Propose["Propose Rule<br/>content + scope + tags"]
+
+    Propose --> ScopeDecision{"Where did<br/>pattern appear?"}
+
+    ScopeDecision -->|One project| ProjectRule["📁 Project Rule"]
+    ScopeDecision -->|Same tech stack| TechRule["🏷️ Tech-Tagged Rule<br/>(e.g., unity, go)"]
+    ScopeDecision -->|Many projects| GlobalRule["🌐 Global Rule"]
+
+    ProjectRule --> Active["Active Rule<br/>effectiveness: 0.5"]
+    TechRule --> Active
+    GlobalRule --> Active
+
+    Active --> Scoring["Score from Sessions<br/>helpful? → score up<br/>not helpful? → score down"]
+
+    Scoring -->|score > 0.3| Keep["✅ Keep Active"]
+    Scoring -->|score < 0.3<br/>after 5 sessions| Deprecate["❌ Auto-Deprecate"]
+
+    Keep --> Active
+    Deprecate --> Archive["Archived<br/>(recoverable via audit)"]
+
+    Audit["/rules audit<br/>(periodic human review)"] --> Active
+    Audit --> Archive
+```
+
+### Cross-Repo Workspace
+
+`/deep-dive` orchestrates investigation and planning across multiple repos in a workspace. Auto-detects repos or reads `.claude-workspace.json`.
+
+```mermaid
+graph TD
+    subgraph Workspace["Workspace (e.g., ~/projects/my-platform/)"]
+        Config[".claude-workspace.json"]
+        Repo1["api-go/<br/>.claude-toolkit.json"]
+        Repo2["ml-python/<br/>.claude-toolkit.json"]
+        Repo3["bff-ts/<br/>.claude-toolkit.json"]
+        Shared["shared/<br/>protobuf contracts"]
+    end
+
+    DeepDive["/deep-dive #42"] --> Config
+    Config --> Investigate["Phase 2: Parallel Investigation<br/>One agent per repo"]
+
+    Investigate --> Agent1["Agent: api-go<br/>Go-specific context"]
+    Investigate --> Agent2["Agent: ml-python<br/>Python-specific context"]
+    Investigate --> Agent3["Agent: bff-ts<br/>TS-specific context"]
+
+    Agent1 --> Synthesize["Phase 3: Synthesize<br/>Root cause + dependency chain"]
+    Agent2 --> Synthesize
+    Agent3 --> Synthesize
+
+    Synthesize --> SubIssues["Phase 4: Create Sub-Issues<br/>#43 (api-go) → #44 (ml-python) → #45 (bff-ts)"]
+
+    SubIssues --> RalphPrompts["Phase 6: Output /ralph Prompts<br/>cd api-go && /ralph #43<br/>cd ml-python && /ralph #44<br/>cd bff-ts && /ralph #45"]
+```
+
 ## License
 
 MIT

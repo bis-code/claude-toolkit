@@ -1,0 +1,46 @@
+{
+  "rules": [
+    {
+      "id": "seed-fe-001",
+      "content": "Lazy load routes and heavy components using dynamic imports with React.lazy() and Suspense. Split bundles at the route level as the baseline; split further only when profiling confirms a meaningful improvement.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript", "javascript"], "domain": ["performance", "frontend"]},
+      "source_evidence": "Initial bundle size directly impacts Time to Interactive. A single large bundle forces users to download all code before they can interact with any part of the application. Route-level splitting defers loading until the user navigates to that feature."
+    },
+    {
+      "id": "seed-fe-002",
+      "content": "Use semantic HTML elements that match the content's meaning: nav, main, article, section, header, footer, button, and a. Do not use div and span for interactive elements. Semantic HTML is the foundation of screen reader accessibility and SEO.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript", "javascript"], "domain": ["accessibility", "frontend"]},
+      "source_evidence": "Screen readers and assistive technologies rely on semantic elements to provide navigation landmarks and conveyed meaning. A div with an onClick listener is invisible to keyboard users and screen readers by default."
+    },
+    {
+      "id": "seed-fe-003",
+      "content": "Debounce event handlers that fire at high frequency: search input, window resize, and scroll. Use a debounce delay of 150-300ms for search, 100ms for resize. Without debouncing, each keystroke or scroll event triggers expensive re-renders or API calls.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript", "javascript"], "domain": ["performance", "frontend"]},
+      "source_evidence": "A search input fires a keydown event on every keystroke. At 200ms per character, a 5-character query triggers 5 API calls in under a second without debouncing. Debouncing collapses bursts into a single call after the user pauses."
+    },
+    {
+      "id": "seed-fe-004",
+      "content": "Serve images in WebP or AVIF format with appropriate srcset and sizes attributes for responsive delivery. Add loading='lazy' to all images below the fold. Provide explicit width and height to prevent Cumulative Layout Shift.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript", "javascript"], "domain": ["performance", "frontend"]},
+      "source_evidence": "Images are typically the largest page weight. WebP is 25-35% smaller than JPEG at equivalent quality. Lazy loading defers off-screen image requests. Missing dimensions cause CLS, a Core Web Vital that affects search ranking."
+    },
+    {
+      "id": "seed-fe-005",
+      "content": "Avoid inline styles in JSX or HTML. Use CSS modules, styled-components, or a utility class system (Tailwind) consistently within the project. Inline styles cannot be overridden with normal CSS specificity, prevent reuse, and make design tokens inaccessible.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript", "javascript"], "domain": ["frontend", "maintainability"]},
+      "source_evidence": "Inline styles have the highest CSS specificity, making them impossible to override from stylesheets. They scatter style logic across component files, duplicate values that should come from a design system, and are not optimized by the browser's CSS engine."
+    },
+    {
+      "id": "seed-fe-006",
+      "content": "Write tests that simulate user behavior rather than testing implementation details. Interact with elements by accessible role, label text, or visible text (using Testing Library queries). Do not test internal state, class names, or component structure.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript", "javascript"], "domain": ["testing", "frontend"]},
+      "source_evidence": "Tests that assert internal state or component structure break when the implementation is refactored, even if user-visible behavior is unchanged. Tests that simulate user interaction verify what users actually care about and survive refactors."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "mixed-monorepo",
+  "repos": [
+    {
+      "path": ".",
+      "type": "go",
+      "monorepo_type": "mixed",
+      "sub_projects": [
+        {"path": "backend", "type": "go", "test_command": "go test ./..."},
+        {"path": "frontend", "type": "typescript", "test_command": "npm test"}
+      ]
+    }
+  ]
+}

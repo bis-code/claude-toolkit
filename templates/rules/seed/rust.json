@@ -1,0 +1,46 @@
+{
+  "rules": [
+    {
+      "id": "seed-rust-001",
+      "content": "Use 'thiserror' for library error types (derive Error with structured variants and messages) and 'anyhow' for application-level error handling (ergonomic context chaining with .context()). Do not mix the two within the same layer.",
+      "scope": "global",
+      "tags": {"tech_stack": ["rust"], "domain": ["error-handling"]},
+      "source_evidence": "thiserror generates the boilerplate for typed, inspectable errors that library callers can match on. anyhow is optimized for applications where errors are logged and reported, not matched — using anyhow in a library robs callers of the ability to handle specific variants."
+    },
+    {
+      "id": "seed-rust-002",
+      "content": "Accept '&str' over 'String' in function parameters whenever the function does not need to own the string. Accept '&[T]' over '&Vec<T>' for slice parameters. This makes callers more flexible without any runtime cost.",
+      "scope": "global",
+      "tags": {"tech_stack": ["rust"], "domain": ["design", "performance"]},
+      "source_evidence": "Taking '&str' accepts both '&String' and '&str' without allocation. Taking 'String' forces callers with a '&str' to clone unnecessarily. The same principle applies to '&[T]' vs '&Vec<T>'."
+    },
+    {
+      "id": "seed-rust-003",
+      "content": "Run 'cargo clippy -- -D warnings' in CI and treat all clippy warnings as errors. Use '#[allow(clippy::lint_name)]' with a justification comment only for specific, deliberate exceptions.",
+      "scope": "global",
+      "tags": {"tech_stack": ["rust"], "domain": ["tooling", "code-quality"]},
+      "source_evidence": "clippy catches common correctness issues, performance anti-patterns, and style problems that rustc's type checker does not flag. Running it as errors in CI prevents the backlog of unfixed warnings that accumulates when it is advisory."
+    },
+    {
+      "id": "seed-rust-004",
+      "content": "Never call .unwrap() or .expect() in production code paths. Use the '?' operator to propagate errors to the caller. Reserve .expect() for cases that are genuinely impossible, and document why in a comment.",
+      "scope": "global",
+      "tags": {"tech_stack": ["rust"], "domain": ["error-handling"]},
+      "source_evidence": ".unwrap() panics on None or Err, converting a recoverable error into an unrecoverable one. The '?' operator propagates the error to the caller who can decide how to handle it, maintaining the recovery path."
+    },
+    {
+      "id": "seed-rust-005",
+      "content": "Derive common traits automatically rather than implementing them manually: Debug and Clone always, PartialEq and Eq for value types, Hash when used in HashMaps, and serde's Serialize/Deserialize for types crossing service boundaries.",
+      "scope": "global",
+      "tags": {"tech_stack": ["rust"], "domain": ["design"]},
+      "source_evidence": "Manual implementations of derivable traits introduce opportunities for bugs (e.g., forgetting to include a new field in PartialEq) and maintenance burden. Derive macros stay in sync automatically when fields are added."
+    },
+    {
+      "id": "seed-rust-006",
+      "content": "Prefer iterator adaptors (map, filter, flat_map, fold) over manual for loops with mutation. Iterators are zero-cost abstractions that compile to equivalent machine code and express intent more clearly than imperative mutation.",
+      "scope": "global",
+      "tags": {"tech_stack": ["rust"], "domain": ["code-quality", "performance"]},
+      "source_evidence": "Iterator chains compose and can be chained without intermediate allocations. They also communicate the shape of the transformation — filter then map — without requiring the reader to mentally trace mutable state."
+    }
+  ]
+}

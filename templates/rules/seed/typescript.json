@@ -1,0 +1,60 @@
+{
+  "rules": [
+    {
+      "id": "seed-ts-001",
+      "content": "Enable 'strict: true' in tsconfig.json with no exceptions. Also enable 'noUncheckedIndexedAccess' for safer array and object access. These settings surface type errors that permissive configs hide until runtime.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript"], "domain": ["type-safety", "tooling"]},
+      "source_evidence": "Strict mode enables strictNullChecks, noImplicitAny, strictFunctionTypes, and others. Disabling these flags trades a few compiler errors today for a category of runtime errors that are much harder to diagnose later."
+    },
+    {
+      "id": "seed-ts-002",
+      "content": "Never use the 'any' type. For genuinely unknown data (API responses, JSON.parse results), use 'unknown' and narrow with type guards or runtime validation. 'any' disables type checking entirely for that value and everything it touches.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript"], "domain": ["type-safety"]},
+      "source_evidence": "'any' is contagious: once a value is typed as 'any', all downstream operations also become 'any', silently removing the type safety that TypeScript was added to provide."
+    },
+    {
+      "id": "seed-ts-003",
+      "content": "Use 'as const' assertions on literal objects and arrays that should not be widened to their base types. This preserves the specific literal type and enables discriminated union narrowing.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript"], "domain": ["type-safety"]},
+      "source_evidence": "Without 'as const', TypeScript widens string literals to 'string' and arrays to mutable types, losing the precision needed for discriminated unions and exhaustiveness checking."
+    },
+    {
+      "id": "seed-ts-004",
+      "content": "Model state with discriminated unions rather than optional fields or type assertions. A discriminant field (e.g., 'status: loading | success | error') allows the compiler to narrow the type in each case.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript"], "domain": ["type-safety", "design"]},
+      "source_evidence": "Optional fields allow impossible states to be representable in the type system (e.g., both 'data' and 'error' populated). Discriminated unions make impossible states unrepresentable at compile time."
+    },
+    {
+      "id": "seed-ts-005",
+      "content": "Prefer async/await over raw Promise chains (.then/.catch). Use Promise.all for independent concurrent operations. Never fire-and-forget async calls without attaching an error handler.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript"], "domain": ["async", "error-handling"]},
+      "source_evidence": "async/await produces linear, readable control flow that matches how developers reason about sequential operations. Unhandled promise rejections cause silent failures and, in Node.js, process crashes."
+    },
+    {
+      "id": "seed-ts-006",
+      "content": "Prefer named exports over default exports for all non-entry-point modules. Named exports allow reliable refactoring, enable better tree-shaking, and prevent name inconsistencies across import sites.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript"], "domain": ["modules"]},
+      "source_evidence": "Default exports can be imported with any name, making codebase-wide searches unreliable. Named exports create a contract between the module and its consumers that tooling can enforce."
+    },
+    {
+      "id": "seed-ts-007",
+      "content": "Validate external data (API responses, environment variables, user input) with a schema library such as Zod or Valibot at the boundary. Do not cast external data with 'as SomeType' — that is a lie to the compiler.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript"], "domain": ["type-safety", "security"]},
+      "source_evidence": "TypeScript's type system is erased at runtime. Casting external data tells the compiler a lie — the data has not been checked and any mismatch will cause runtime errors that TypeScript was supposed to prevent."
+    },
+    {
+      "id": "seed-ts-008",
+      "content": "Use 'readonly' on arrays and object properties that should not be mutated after creation. Prefer 'ReadonlyArray<T>' or 'readonly T[]' for collection parameters. Immutable data structures prevent a class of accidental mutation bugs.",
+      "scope": "global",
+      "tags": {"tech_stack": ["typescript"], "domain": ["type-safety", "design"]},
+      "source_evidence": "Mutable shared state is a common source of bugs that are hard to reproduce. 'readonly' encodes the intended usage at the type level, and the compiler enforces the constraint without runtime overhead."
+    }
+  ]
+}

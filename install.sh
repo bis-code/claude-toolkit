@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-TOOLKIT_VERSION="2.0.0"
+TOOLKIT_VERSION="4.0.0"
 TOOLKIT_DIR="${CLAUDE_TOOLKIT_DIR:-$HOME/.claude/toolkit}"
 TOOLKIT_REPO="https://github.com/bis-code/claude-toolkit.git"
 
@@ -53,6 +53,7 @@ SKIP_HOOKS=false
 SKIP_AGENTS=false
 DRY_RUN=false
 READ_ONLY=false
+WORKSPACE_MODE=false
 PROJECT_DIR=""
 
 while [[ $# -gt 0 ]]; do
@@ -68,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --skip-agents) SKIP_AGENTS=true; shift ;;
     --dry-run)     DRY_RUN=true; shift ;;
     --read-only)   READ_ONLY=true; shift ;;
+    --workspace)   WORKSPACE_MODE=true; shift ;;
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
     -h|--help)
       echo "Claude Code Toolkit Installer v$TOOLKIT_VERSION"
@@ -87,6 +89,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --skip-hooks       Skip hooks installation"
       echo "  --skip-agents      Skip agents installation"
       echo "  --read-only        Install read-only rule (Claude won't modify files unless asked)"
+      echo "  --workspace        Generate .claude-workspace.json from auto-detection"
       echo "  --dry-run          Show what would be installed without doing it"
       echo "  --project-dir DIR  Target directory (default: current or git root)"
       echo "  -h, --help         Show this help"
@@ -122,6 +125,98 @@ if [ "$PREREQS_OK" = false ]; then
 fi
 
 # ─────────────────────────────────────────────
+# Step 1b: Install/update Go MCP server binary
+# ─────────────────────────────────────────────
+
+SERVER_BIN="$HOME/.claude/toolkit/bin/claude-toolkit-server"
+SERVER_REPO="bis-code/claude-toolkit"
+
+install_server_binary() {
+  local target_dir="$HOME/.claude/toolkit/bin"
+  mkdir -p "$target_dir"
+
+  # Detect platform
+  local os_name arch_name
+  os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch_name="$(uname -m)"
+
+  case "$arch_name" in
+    x86_64)  arch_name="amd64" ;;
+    aarch64) arch_name="arm64" ;;
+    arm64)   arch_name="arm64" ;;
+    *)       arch_name="$arch_name" ;;
+  esac
+
+  local binary_name="claude-toolkit-server-${os_name}-${arch_name}"
+
+  # Try downloading from GitHub releases
+  if command -v gh &>/dev/null; then
+    local latest_tag
+    latest_tag=$(gh release list --repo "$SERVER_REPO" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+    if [ -n "$latest_tag" ]; then
+      info "Downloading server binary ($os_name/$arch_name) from release $latest_tag..."
+      if gh release download "$latest_tag" --repo "$SERVER_REPO" --pattern "$binary_name" --dir "$target_dir" --clobber 2>/dev/null; then
+        mv "$target_dir/$binary_name" "$SERVER_BIN"
+        chmod +x "$SERVER_BIN"
+        info "Server binary installed: $SERVER_BIN"
+        return 0
+      fi
+      warn "Binary not found in release, trying fallback..."
+    fi
+  fi
+
+  # Fallback: build from source if Go is available
+  if command -v go &>/dev/null; then
+    info "Building server from source..."
+    local server_src="$TOOLKIT_DIR/server"
+    if [ -d "$server_src" ]; then
+      (cd "$server_src" && go build -o "$SERVER_BIN" ./cmd/server/) 2>&1
+      if [ $? -eq 0 ]; then
+        info "Server binary built: $SERVER_BIN"
+        return 0
+      else
+        error "Failed to build server binary"
+        return 1
+      fi
+    else
+      warn "Server source not found at $server_src"
+      return 1
+    fi
+  fi
+
+  warn "Cannot install server binary (no release found and Go not available)"
+  warn "Install Go (https://go.dev) or wait for a release with pre-built binaries"
+  return 1
+}
+
+verify_server_health() {
+  if [ ! -x "$SERVER_BIN" ]; then
+    warn "Server binary not found, skipping health check"
+    return 1
+  fi
+
+  info "Verifying server health..."
+  local health_response
+  health_response=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"health-check","version":"1.0.0"}}}' | timeout 5 "$SERVER_BIN" 2>/dev/null | head -1 || echo "")
+
+  if echo "$health_response" | grep -q '"result"' 2>/dev/null; then
+    info "Server health check passed"
+    return 0
+  else
+    warn "Server health check inconclusive (server may still work)"
+    return 0
+  fi
+}
+
+header "1b" "Go MCP Server"
+if [ -x "$SERVER_BIN" ] && [ "$MODE" != "update" ]; then
+  info "Server binary already installed: $SERVER_BIN"
+else
+  install_server_binary
+fi
+verify_server_health
+
+# ─────────────────────────────────────────────
 # Uninstall: remove all toolkit files and exit
 # ─────────────────────────────────────────────
 
@@ -152,12 +247,30 @@ if [ "$MODE" = "uninstall" ]; then
   fi
 
   # Remove toolkit-generated config files
-  for f in .claude-toolkit.json .deep-think.json .mcp.json; do
+  for f in .claude-toolkit.json .deep-think.json; do
     if [ -f "$PROJECT_DIR/$f" ]; then
       rm "$PROJECT_DIR/$f"
       info "Removed $f"
     fi
   done
+
+  # Remove project .mcp.json only if it contains exclusively toolkit-managed servers
+  if [ -f "$PROJECT_DIR/.mcp.json" ]; then
+    rm "$PROJECT_DIR/.mcp.json"
+    info "Removed .mcp.json"
+  fi
+
+  # Remove toolkit servers from user-scope ~/.claude.json
+  USER_MCP="$HOME/.claude.json"
+  if [ -f "$USER_MCP" ]; then
+    for srv in claude-toolkit deep-think leann-server context7; do
+      if jq -e ".mcpServers.\"$srv\"" "$USER_MCP" &>/dev/null; then
+        jq "del(.mcpServers.\"$srv\")" "$USER_MCP" > "$USER_MCP.tmp" && mv "$USER_MCP.tmp" "$USER_MCP"
+      fi
+    done
+    REMAINING=$(jq -r '.mcpServers | keys | join(", ")' "$USER_MCP" 2>/dev/null)
+    info "~/.claude.json — removed toolkit servers (remaining: $REMAINING)"
+  fi
 
   # Remove hooks.json (installed via merge, not tracked in managedFiles)
   if [ -f "$PROJECT_DIR/.claude/hooks/hooks.json" ]; then
@@ -182,6 +295,13 @@ if [ "$MODE" = "uninstall" ]; then
     else
       info "Removed .claude/"
     fi
+  fi
+
+  # Remove server binary
+  if [ -x "$HOME/.claude/toolkit/bin/claude-toolkit-server" ]; then
+    rm -f "$HOME/.claude/toolkit/bin/claude-toolkit-server"
+    rmdir "$HOME/.claude/toolkit/bin" 2>/dev/null || true
+    info "Removed server binary"
   fi
 
   echo ""
@@ -486,23 +606,38 @@ else
   warn "Agents: skipped"
 fi
 
-# .mcp.json — merge servers
-install_mcp_config "$PROJECT_DIR" "deep-think"
+# ── User-scope MCP servers (~/.claude.json) ──
+# Global servers that are the same everywhere go to user scope.
+# Claude Code reads user MCPs from ~/.claude.json under .mcpServers key.
+USER_MCP="$HOME/.claude.json"
 
+if [ -x "$SERVER_BIN" ]; then
+  merge_mcp_server "$USER_MCP" "claude-toolkit" "{\"command\":\"$SERVER_BIN\",\"args\":[]}"
+fi
+merge_mcp_server "$USER_MCP" "deep-think" '{"command":"mcp-deep-think","args":[]}'
+
+if [ "$INSTALL_LEANN" = true ]; then
+  merge_mcp_server "$USER_MCP" "leann-server" '{"command":"leann_mcp","args":[]}'
+fi
+
+if [ "$INSTALL_CONTEXT7" = true ]; then
+  merge_mcp_server "$USER_MCP" "context7" '{"command":"npx","args":["-y","@upstash/context7-mcp@latest"]}'
+fi
+
+USER_MCPS=$(jq -r '.mcpServers | keys | join(", ")' "$USER_MCP" 2>/dev/null)
+info "~/.claude.json (user scope) — $USER_MCPS"
+
+# ── Project-scope MCP servers (.mcp.json) ──
+# Only project-specific servers go here (e.g., playwright for UI projects).
 if [ "$INSTALL_PLAYWRIGHT" = true ]; then
   install_mcp_config "$PROJECT_DIR" "playwright"
 fi
 
-if [ "$INSTALL_LEANN" = true ]; then
-  install_mcp_config "$PROJECT_DIR" "leann-server"
+# Report project-scope MCPs (may be empty if no project-specific servers)
+if [ -f "$PROJECT_DIR/.mcp.json" ]; then
+  PROJECT_MCPS=$(jq -r '.mcpServers | keys | join(", ")' "$PROJECT_DIR/.mcp.json" 2>/dev/null)
+  [ -n "$PROJECT_MCPS" ] && info ".mcp.json (project scope) — $PROJECT_MCPS"
 fi
-
-if [ "$INSTALL_CONTEXT7" = true ]; then
-  install_mcp_config "$PROJECT_DIR" "context7"
-fi
-
-INSTALLED_MCPS=$(jq -r '.mcpServers | keys | join(", ")' "$PROJECT_DIR/.mcp.json" 2>/dev/null)
-info ".mcp.json — servers: $INSTALLED_MCPS"
 
 # .deep-think.json
 _tracked_copy "$TEMPLATES/deep-think.json" "$PROJECT_DIR/.deep-think.json" ".deep-think.json"
@@ -577,6 +712,86 @@ elif [ "$IS_GIT_REPO" = false ]; then
 fi
 
 # ─────────────────────────────────────────────
+# Step 5b: Workspace mode — generate .claude-workspace.json
+# ─────────────────────────────────────────────
+
+if [ "$WORKSPACE_MODE" = true ]; then
+  header "5b" "Workspace configuration"
+
+  WORKSPACE_CONFIG="$PROJECT_DIR/.claude-workspace.json"
+
+  if [ -f "$WORKSPACE_CONFIG" ] && [ "$FORCE" = false ]; then
+    warn ".claude-workspace.json already exists (use --force to regenerate)"
+  else
+    # Auto-detect repos in the directory
+    WORKSPACE_NAME="$(basename "$PROJECT_DIR")"
+    REPOS_JSON="["
+    SHARED_JSON="["
+    FIRST_REPO=true
+    FIRST_SHARED=true
+
+    for dir in "$PROJECT_DIR"/*/; do
+      [ ! -d "$dir" ] && continue
+      dir_name="$(basename "$dir")"
+
+      if [ -d "$dir/.git" ]; then
+        # It's a git repo — detect tech stack
+        repo_type=""
+        [ -f "$dir/go.mod" ] && repo_type="go"
+        [ -f "$dir/Cargo.toml" ] && repo_type="rust"
+        [ -f "$dir/pyproject.toml" ] || [ -f "$dir/requirements.txt" ] && repo_type="python"
+        [ -f "$dir/tsconfig.json" ] && repo_type="typescript"
+        [ -f "$dir/package.json" ] && [ -z "$repo_type" ] && repo_type="typescript"
+
+        # Detect branch
+        repo_branch="main"
+        if [ -f "$dir/.git/HEAD" ]; then
+          head_content=$(cat "$dir/.git/HEAD")
+          case "$head_content" in
+            ref:*) repo_branch="${head_content#ref: refs/heads/}" ;;
+          esac
+        fi
+
+        [ "$FIRST_REPO" = false ] && REPOS_JSON+=","
+        REPOS_JSON+="{\"path\":\"$dir_name\",\"branch\":\"$repo_branch\""
+        [ -n "$repo_type" ] && REPOS_JSON+=",\"type\":\"$repo_type\""
+        REPOS_JSON+="}"
+        FIRST_REPO=false
+        info "Repo: $dir_name ($repo_type, branch: $repo_branch)"
+      else
+        # Not a git repo — shared directory
+        [ "$FIRST_SHARED" = false ] && SHARED_JSON+=","
+        SHARED_JSON+="\"$dir_name/\""
+        FIRST_SHARED=false
+      fi
+    done
+
+    REPOS_JSON+="]"
+    SHARED_JSON+="]"
+
+    cat > "$WORKSPACE_CONFIG" <<EOFWS
+{
+  "name": "$WORKSPACE_NAME",
+  "repos": $REPOS_JSON,
+  "shared": $SHARED_JSON,
+  "planning_repo": "",
+  "cross_repo_rules": [],
+  "dependency_order": [],
+  "domain_labels": []
+}
+EOFWS
+    jq '.' "$WORKSPACE_CONFIG" > "$WORKSPACE_CONFIG.tmp" && mv "$WORKSPACE_CONFIG.tmp" "$WORKSPACE_CONFIG"
+    info ".claude-workspace.json generated"
+    info "Edit it to set planning_repo, dependency_order, and domain_labels"
+  fi
+fi
+
+# Load seed rules into server on first install
+if [ -x "$SERVER_BIN" ] && [ -d "$TOOLKIT_DIR/templates/rules/seed" ]; then
+  info "Seed rules available at: $TOOLKIT_DIR/templates/rules/seed/"
+fi
+
+# ─────────────────────────────────────────────
 # Step 6: Global commands
 # ─────────────────────────────────────────────
 
@@ -602,6 +817,7 @@ echo "  Installed:"
 [ "$SKIP_AGENTS" = false ] && echo "    Agents:   ${TOTAL_AGENT_COUNT:-0} (${GENERIC_COUNT:-0} generic + ${DOMAIN_AGENT_COUNT:-0} domain)"
 echo "    Commands: $(ls "$TOOLKIT_DIR/commands/"*.md 2>/dev/null | wc -l | tr -d ' ') slash commands"
 echo "    MCP:      $INSTALLED_MCPS"
+[ -x "$SERVER_BIN" ] && echo "    Server:   claude-toolkit-server (V4)"
 [ "$READ_ONLY" = true ] && echo "    Mode:     read-only"
 echo ""
 echo "  Next steps:"

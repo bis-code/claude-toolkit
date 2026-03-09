@@ -1,0 +1,60 @@
+{
+  "rules": [
+    {
+      "id": "seed-go-001",
+      "content": "Pass context.Context as the first parameter to every function that performs I/O, makes network calls, or queries a database. Never store a context in a struct field.",
+      "scope": "global",
+      "tags": {"tech_stack": ["go"], "domain": ["api", "concurrency"]},
+      "source_evidence": "Context is Go's cancellation and deadline mechanism. Functions without a context parameter cannot be cancelled, making them resistant to timeout enforcement and graceful shutdown."
+    },
+    {
+      "id": "seed-go-002",
+      "content": "Always handle errors explicitly. Never use the blank identifier '_' to discard an error return value. If an error truly cannot occur, document why with a comment.",
+      "scope": "global",
+      "tags": {"tech_stack": ["go"], "domain": ["error-handling"]},
+      "source_evidence": "Go's explicit error returns are the language's primary mechanism for reliable programs. Discarding errors turns recoverable failures into silent corruption or panics downstream."
+    },
+    {
+      "id": "seed-go-003",
+      "content": "Write unit tests using the table-driven pattern: define a slice of named test cases with inputs and expected outputs, then range over them with t.Run. Use testify/require for assertions that must pass for the test to continue.",
+      "scope": "global",
+      "tags": {"tech_stack": ["go"], "domain": ["testing"]},
+      "source_evidence": "Table-driven tests make it trivial to add edge cases without duplicating boilerplate. The named sub-test output from t.Run pinpoints exactly which case failed without reading the test body."
+    },
+    {
+      "id": "seed-go-004",
+      "content": "Wrap errors at each layer boundary using fmt.Errorf with the %w verb: 'fmt.Errorf(\"fetching user %d: %w\", id, err)'. Use errors.Is and errors.As for inspection, never string matching.",
+      "scope": "global",
+      "tags": {"tech_stack": ["go"], "domain": ["error-handling"]},
+      "source_evidence": "Wrapping with %w preserves the error chain for programmatic inspection while adding the context needed to trace the call path. String matching on error messages breaks across Go versions and dependency updates."
+    },
+    {
+      "id": "seed-go-005",
+      "content": "Define interfaces at the site where they are consumed, not where they are implemented. Keep interfaces small — one to three methods. Compose larger interfaces from smaller ones when needed.",
+      "scope": "global",
+      "tags": {"tech_stack": ["go"], "domain": ["design"]},
+      "source_evidence": "Consumer-side interfaces decouple packages without requiring producers to know about consumers. Small interfaces are easy to mock, easy to satisfy, and express a precise contract."
+    },
+    {
+      "id": "seed-go-006",
+      "content": "Use defer immediately after acquiring a resource to schedule its release: file.Close(), mu.Unlock(), tx.Rollback(). This pairs acquisition and cleanup visually and prevents leaks if early returns are added later.",
+      "scope": "global",
+      "tags": {"tech_stack": ["go"], "domain": ["resource-management"]},
+      "source_evidence": "Resource leaks from missing cleanup are common when code grows and early return paths are added. Defer ensures cleanup runs unconditionally regardless of which return path is taken."
+    },
+    {
+      "id": "seed-go-007",
+      "content": "Avoid init() functions. They run implicitly, are hard to test, cannot return errors cleanly, and create hidden dependencies between packages. Use explicit initialization functions called from main instead.",
+      "scope": "global",
+      "tags": {"tech_stack": ["go"], "domain": ["design"]},
+      "source_evidence": "init() creates invisible coupling: execution order across packages is non-obvious, failures cannot be handled gracefully, and the behavior cannot be disabled for tests."
+    },
+    {
+      "id": "seed-go-008",
+      "content": "Use struct embedding sparingly and only for genuine 'is-a' composition, not for code reuse. Embedding promotes all fields and methods into the outer type's API surface, which can expose unintended behavior.",
+      "scope": "global",
+      "tags": {"tech_stack": ["go"], "domain": ["design"]},
+      "source_evidence": "Embedding for convenience creates fragile coupling: changes to the embedded type silently affect the embedding type's API. Prefer explicit delegation to control what is exposed."
+    }
+  ]
+}

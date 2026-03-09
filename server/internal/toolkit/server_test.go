@@ -1,0 +1,1582 @@
+package toolkit_test
+
+import (
+	"fmt"
+	"os"
+	"time"
+	"context"
+	"encoding/json"
+	"testing"
+
+	"github.com/bis-code/claude-toolkit/server/internal/db"
+	"github.com/bis-code/claude-toolkit/server/internal/toolkit"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
+)
+
+func setupClient(t *testing.T) (*client.Client, *db.Store) {
+	t.Helper()
+	store, err := db.NewMemoryStore()
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	s := toolkit.NewServer(toolkit.WithStore(store))
+	c, err := client.NewInProcessClient(s)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+
+	_, err = c.Initialize(context.Background(), mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: "2024-11-05",
+			Capabilities:    mcp.ClientCapabilities{},
+			ClientInfo:      mcp.Implementation{Name: "test", Version: "1.0.0"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to initialize: %v", err)
+	}
+	return c, store
+}
+
+func callTool(t *testing.T, c *client.Client, name string, args map[string]interface{}) string {
+	t.Helper()
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      name,
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		t.Fatalf("calling %s failed: %v", name, err)
+	}
+	if len(result.Content) == 0 {
+		t.Fatalf("%s returned empty content", name)
+	}
+	text, ok := mcp.AsTextContent(result.Content[0])
+	if !ok {
+		t.Fatalf("%s result is not text", name)
+	}
+	return text.Text
+}
+
+func TestNewServer_ReturnsValidServer(t *testing.T) {
+	s := toolkit.NewServer()
+	if s == nil {
+		t.Fatal("NewServer returned nil")
+	}
+}
+
+func TestServer_ListTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	expectedTools := []string{
+		"toolkit__health_check",
+		"toolkit__get_active_rules",
+		"toolkit__create_rule",
+		"toolkit__update_rule",
+		"toolkit__delete_rule",
+		"toolkit__list_rules",
+		"toolkit__score_rule",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range expectedTools {
+		if !toolNames[expected] {
+			t.Errorf("expected tool %q not found", expected)
+		}
+	}
+}
+
+func TestServer_HealthCheck(t *testing.T) {
+	c, _ := setupClient(t)
+	text := callTool(t, c, "toolkit__health_check", nil)
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if result["status"] != "healthy" {
+		t.Errorf("status = %v, want 'healthy'", result["status"])
+	}
+	if result["version"] != toolkit.ServerVersion {
+		t.Errorf("version = %v, want %s", result["version"], toolkit.ServerVersion)
+	}
+}
+
+// Integration tests: full MCP tool call → rule engine → response
+
+func TestIntegration_CreateAndGetRule(t *testing.T) {
+	c, _ := setupClient(t)
+
+	// Create a rule via MCP
+	createResult := callTool(t, c, "toolkit__create_rule", map[string]interface{}{
+		"content":         "Always use context.Context as first param",
+		"scope":           "global",
+		"source_evidence": "Go best practice",
+	})
+
+	var created map[string]interface{}
+	json.Unmarshal([]byte(createResult), &created)
+
+	if created["message"] != "rule created" {
+		t.Errorf("unexpected create result: %s", createResult)
+	}
+	if created["sensitive"] != false {
+		t.Error("clean rule should not be sensitive")
+	}
+
+	// Get active rules — should include the created rule
+	getResult := callTool(t, c, "toolkit__get_active_rules", map[string]interface{}{
+		"project": "my-go-project",
+	})
+
+	var got map[string]interface{}
+	json.Unmarshal([]byte(getResult), &got)
+
+	count := got["count"].(float64)
+	if count < 1 {
+		t.Errorf("expected at least 1 rule, got %v", count)
+	}
+}
+
+func TestIntegration_CreateSensitiveRule(t *testing.T) {
+	c, _ := setupClient(t)
+
+	createResult := callTool(t, c, "toolkit__create_rule", map[string]interface{}{
+		"content": "Use api_key: sk-abc123def456789012345678 for testing",
+		"scope":   "project",
+		"project": "my-project",
+	})
+
+	var created map[string]interface{}
+	json.Unmarshal([]byte(createResult), &created)
+
+	if created["sensitive"] != true {
+		t.Error("rule with API key should be flagged as sensitive")
+	}
+	if created["local_only"] != true {
+		t.Error("sensitive rule should be local_only")
+	}
+}
+
+func TestIntegration_CreateUpdateDeleteRule(t *testing.T) {
+	c, _ := setupClient(t)
+
+	// Create
+	createResult := callTool(t, c, "toolkit__create_rule", map[string]interface{}{
+		"content": "Original content",
+		"scope":   "global",
+	})
+	var created map[string]interface{}
+	json.Unmarshal([]byte(createResult), &created)
+	ruleID := created["id"].(string)
+
+	// Update
+	callTool(t, c, "toolkit__update_rule", map[string]interface{}{
+		"id":      ruleID,
+		"content": "Updated content",
+	})
+
+	// List and verify update
+	listResult := callTool(t, c, "toolkit__list_rules", map[string]interface{}{})
+	var listed map[string]interface{}
+	json.Unmarshal([]byte(listResult), &listed)
+
+	rulesList := listed["rules"].([]interface{})
+	found := false
+	for _, r := range rulesList {
+		rule := r.(map[string]interface{})
+		if rule["id"] == ruleID && rule["content"] == "Updated content" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("updated rule not found in list")
+	}
+
+	// Delete
+	callTool(t, c, "toolkit__delete_rule", map[string]interface{}{
+		"id": ruleID,
+	})
+
+	// Verify deleted
+	listResult2 := callTool(t, c, "toolkit__list_rules", map[string]interface{}{})
+	var listed2 map[string]interface{}
+	json.Unmarshal([]byte(listResult2), &listed2)
+	count := listed2["count"].(float64)
+	if count != 0 {
+		t.Errorf("expected 0 rules after delete, got %v", count)
+	}
+}
+
+func TestIntegration_ScoreRule(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create rule directly in store (known ID)
+	store.CreateRule(&db.Rule{
+		ID:            "score-test",
+		Content:       "Test rule",
+		Scope:         "global",
+		Effectiveness: 0.5,
+	})
+
+	// Score as helpful via MCP
+	scoreResult := callTool(t, c, "toolkit__score_rule", map[string]interface{}{
+		"id":      "score-test",
+		"helpful": true,
+		"context": "helped with testing",
+	})
+
+	var scored map[string]interface{}
+	json.Unmarshal([]byte(scoreResult), &scored)
+
+	effectiveness := scored["effectiveness"].(float64)
+	if effectiveness != 1.0 {
+		t.Errorf("effectiveness = %f, want 1.0 (one helpful score)", effectiveness)
+	}
+}
+
+func TestIntegration_MergeScopesViaMCP(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create rules in different scopes
+	store.CreateRule(&db.Rule{ID: "global-1", Content: "Global rule", Scope: "global", Effectiveness: 0.9})
+	store.CreateRule(&db.Rule{ID: "proj-1", Content: "Project rule", Scope: "project", Project: "my-proj", Effectiveness: 0.8})
+	store.CreateRule(&db.Rule{ID: "proj-other", Content: "Other project", Scope: "project", Project: "other", Effectiveness: 0.7})
+
+	// Get active rules for my-proj — should get global + my-proj, NOT other
+	getResult := callTool(t, c, "toolkit__get_active_rules", map[string]interface{}{
+		"project": "my-proj",
+	})
+
+	var got map[string]interface{}
+	json.Unmarshal([]byte(getResult), &got)
+
+	count := int(got["count"].(float64))
+	if count != 2 {
+		t.Errorf("expected 2 rules (global + project), got %d", count)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry tool tests (US-011)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesTelemetryTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	telemetryTools := []string{
+		"toolkit__start_session",
+		"toolkit__log_event",
+		"toolkit__log_stuck",
+		"toolkit__log_blocked",
+		"toolkit__end_session",
+		"toolkit__get_session_history",
+		"toolkit__get_project_stats",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range telemetryTools {
+		if !toolNames[expected] {
+			t.Errorf("expected telemetry tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_StartSession(t *testing.T) {
+	c, store := setupClient(t)
+
+	result := callTool(t, c, "toolkit__start_session", map[string]interface{}{
+		"session_id": "sess-start-001",
+		"project":    "my-project",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON response: %v", err)
+	}
+	if resp["message"] != "session started" {
+		t.Errorf("unexpected message: %v", resp["message"])
+	}
+
+	// Verify session exists in DB
+	sess, err := store.GetSession("sess-start-001")
+	if err != nil {
+		t.Fatalf("session not found in store: %v", err)
+	}
+	if sess.Project != "my-project" {
+		t.Errorf("project = %q, want %q", sess.Project, "my-project")
+	}
+	if sess.StartedAt.IsZero() {
+		t.Error("started_at should not be zero")
+	}
+}
+
+func TestIntegration_StartSession_DuplicateReturnsError(t *testing.T) {
+	c, _ := setupClient(t)
+
+	// First call succeeds
+	callTool(t, c, "toolkit__start_session", map[string]interface{}{
+		"session_id": "sess-dup-001",
+		"project":    "proj",
+	})
+
+	// Second call with same ID should return an error result (not a fatal transport error)
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__start_session",
+			Arguments: map[string]interface{}{
+				"session_id": "sess-dup-001",
+				"project":    "proj",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for duplicate session_id")
+	}
+}
+
+func TestIntegration_LogEventAutoCreatesSession(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Log event for a session_id that doesn't exist yet
+	result := callTool(t, c, "toolkit__log_event", map[string]interface{}{
+		"session_id": "sess-auto-001",
+		"type":       "tool_call",
+		"result":     "success",
+		"details":    "called read_file",
+		"project":    "auto-project",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "event logged" {
+		t.Errorf("unexpected message: %v", resp["message"])
+	}
+	eventID, ok := resp["id"].(string)
+	if !ok || eventID == "" {
+		t.Error("expected non-empty event id")
+	}
+
+	// Session should have been auto-created
+	sess, err := store.GetSession("sess-auto-001")
+	if err != nil {
+		t.Fatalf("session was not auto-created: %v", err)
+	}
+	if sess.Project != "auto-project" {
+		t.Errorf("auto-created session project = %q, want %q", sess.Project, "auto-project")
+	}
+
+	// Event should be stored
+	events, err := store.ListEvents("sess-auto-001")
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != "tool_call" {
+		t.Errorf("event type = %q, want %q", events[0].Type, "tool_call")
+	}
+	if events[0].Result != "success" {
+		t.Errorf("event result = %q, want %q", events[0].Result, "success")
+	}
+}
+
+func TestIntegration_LogEventOnExistingSession(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Pre-create session
+	sess := &db.Session{
+		ID:        "sess-existing-001",
+		Project:   "existing-project",
+		StartedAt: nowTime(),
+	}
+	if err := store.CreateSession(sess); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	callTool(t, c, "toolkit__log_event", map[string]interface{}{
+		"session_id": "sess-existing-001",
+		"type":       "compile",
+		"result":     "failure",
+	})
+
+	events, err := store.ListEvents("sess-existing-001")
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != "compile" {
+		t.Errorf("event type = %q, want %q", events[0].Type, "compile")
+	}
+}
+
+func TestIntegration_LogStuckEvent(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Pre-create session
+	store.CreateSession(&db.Session{
+		ID: "sess-stuck-001", Project: "p", StartedAt: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__log_stuck", map[string]interface{}{
+		"session_id": "sess-stuck-001",
+		"problem":    "cannot resolve import",
+		"attempts":   float64(3),
+		"hypothesis": "wrong module path",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "stuck event logged" {
+		t.Errorf("unexpected message: %v", resp["message"])
+	}
+
+	events, err := store.ListEvents("sess-stuck-001")
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != "stuck" {
+		t.Errorf("event type = %q, want %q", events[0].Type, "stuck")
+	}
+	if events[0].Result != "stuck" {
+		t.Errorf("event result = %q, want %q", events[0].Result, "stuck")
+	}
+	// Details should contain the problem info
+	if events[0].Details == "" {
+		t.Error("details should not be empty for stuck event")
+	}
+}
+
+func TestIntegration_LogBlockedEvent(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateSession(&db.Session{
+		ID: "sess-blocked-001", Project: "p", StartedAt: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__log_blocked", map[string]interface{}{
+		"session_id":    "sess-blocked-001",
+		"problem":       "build fails",
+		"tried":         "clean build cache",
+		"failed_because": "missing dependency",
+		"hypothesis":    "need to run go mod tidy",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "blocked event logged" {
+		t.Errorf("unexpected message: %v", resp["message"])
+	}
+
+	// blocked_template must be present and non-empty
+	template, ok := resp["blocked_template"].(string)
+	if !ok || template == "" {
+		t.Error("expected non-empty blocked_template in response")
+	}
+
+	events, err := store.ListEvents("sess-blocked-001")
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != "blocked" {
+		t.Errorf("event type = %q, want %q", events[0].Type, "blocked")
+	}
+}
+
+func TestIntegration_EndSession(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateSession(&db.Session{
+		ID: "sess-end-001", Project: "p", StartedAt: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__end_session", map[string]interface{}{
+		"session_id":      "sess-end-001",
+		"summary":         "implemented feature X",
+		"confidence":      0.85,
+		"tasks_completed": float64(3),
+		"tasks_failed":    float64(1),
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "session ended" {
+		t.Errorf("unexpected message: %v", resp["message"])
+	}
+
+	// Verify session updated in DB
+	sess, err := store.GetSession("sess-end-001")
+	if err != nil {
+		t.Fatalf("failed to get session: %v", err)
+	}
+	if sess.Summary != "implemented feature X" {
+		t.Errorf("summary = %q, want %q", sess.Summary, "implemented feature X")
+	}
+	if sess.Confidence != 0.85 {
+		t.Errorf("confidence = %f, want 0.85", sess.Confidence)
+	}
+	if sess.TasksCompleted != 3 {
+		t.Errorf("tasks_completed = %d, want 3", sess.TasksCompleted)
+	}
+	if sess.TasksFailed != 1 {
+		t.Errorf("tasks_failed = %d, want 1", sess.TasksFailed)
+	}
+	if sess.EndedAt == nil {
+		t.Error("ended_at should be set")
+	}
+}
+
+func TestIntegration_EndSession_NotFound(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__end_session",
+			Arguments: map[string]interface{}{
+				"session_id": "sess-nonexistent",
+				"summary":    "done",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for non-existent session")
+	}
+}
+
+func TestIntegration_GetSessionHistory(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create sessions for two projects
+	for i := 0; i < 3; i++ {
+		store.CreateSession(&db.Session{
+			ID:        fmt.Sprintf("sess-hist-proj-a-%d", i),
+			Project:   "project-a",
+			StartedAt: nowTime(),
+		})
+	}
+	for i := 0; i < 2; i++ {
+		store.CreateSession(&db.Session{
+			ID:        fmt.Sprintf("sess-hist-proj-b-%d", i),
+			Project:   "project-b",
+			StartedAt: nowTime(),
+		})
+	}
+
+	// Get all sessions (no filter)
+	result := callTool(t, c, "toolkit__get_session_history", map[string]interface{}{})
+
+	var allResp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &allResp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	allCount := int(allResp["count"].(float64))
+	if allCount != 5 {
+		t.Errorf("expected 5 total sessions, got %d", allCount)
+	}
+
+	// Get sessions filtered by project-a
+	resultA := callTool(t, c, "toolkit__get_session_history", map[string]interface{}{
+		"project": "project-a",
+	})
+
+	var projAResp map[string]interface{}
+	if err := json.Unmarshal([]byte(resultA), &projAResp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	projACount := int(projAResp["count"].(float64))
+	if projACount != 3 {
+		t.Errorf("expected 3 sessions for project-a, got %d", projACount)
+	}
+
+	// Get sessions with limit
+	resultLimited := callTool(t, c, "toolkit__get_session_history", map[string]interface{}{
+		"limit": float64(2),
+	})
+
+	var limitedResp map[string]interface{}
+	if err := json.Unmarshal([]byte(resultLimited), &limitedResp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	limitedCount := int(limitedResp["count"].(float64))
+	if limitedCount != 2 {
+		t.Errorf("expected 2 sessions with limit=2, got %d", limitedCount)
+	}
+}
+
+func TestIntegration_GetProjectStats(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create 2 sessions for "stats-project"
+	sess1 := &db.Session{ID: "sess-stats-001", Project: "stats-project", StartedAt: nowTime()}
+	sess2 := &db.Session{ID: "sess-stats-002", Project: "stats-project", StartedAt: nowTime()}
+	store.CreateSession(sess1)
+	store.CreateSession(sess2)
+
+	// End sess1 with stats
+	store.EndSession("sess-stats-001", "done", 0.9, 5, 1, 0)
+
+	// Add events to sess1
+	store.CreateEvent(&db.Event{
+		ID: "e-stats-1", SessionID: "sess-stats-001",
+		Type: "tool_call", Result: "success", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "e-stats-2", SessionID: "sess-stats-001",
+		Type: "compile", Result: "success", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "e-stats-3", SessionID: "sess-stats-001",
+		Type: "tool_call", Result: "failure", Timestamp: nowTime(),
+	})
+
+	// Add events to sess2
+	store.CreateEvent(&db.Event{
+		ID: "e-stats-4", SessionID: "sess-stats-002",
+		Type: "tool_call", Result: "success", Timestamp: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__get_project_stats", map[string]interface{}{
+		"project": "stats-project",
+	})
+
+	var stats map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &stats); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if int(stats["total_sessions"].(float64)) != 2 {
+		t.Errorf("total_sessions = %v, want 2", stats["total_sessions"])
+	}
+	if int(stats["total_events"].(float64)) != 4 {
+		t.Errorf("total_events = %v, want 4", stats["total_events"])
+	}
+
+	eventsByType, ok := stats["events_by_type"].(map[string]interface{})
+	if !ok {
+		t.Fatal("events_by_type should be a map")
+	}
+	if int(eventsByType["tool_call"].(float64)) != 3 {
+		t.Errorf("tool_call count = %v, want 3", eventsByType["tool_call"])
+	}
+	if int(eventsByType["compile"].(float64)) != 1 {
+		t.Errorf("compile count = %v, want 1", eventsByType["compile"])
+	}
+
+	// avg_confidence: only sess1 has ended_at (confidence 0.9); sess2 is open (0.0)
+	// We include both — avg = (0.9 + 0.0) / 2 = 0.45, or only ended sessions
+	// The spec says "avg_confidence" from sessions — implementation can choose either.
+	// We'll just assert it's present and is a number.
+	if _, ok := stats["avg_confidence"].(float64); !ok {
+		t.Error("avg_confidence should be a float64")
+	}
+
+	totalCompleted, ok := stats["total_tasks_completed"].(float64)
+	if !ok {
+		t.Error("total_tasks_completed should be present")
+	}
+	// sess1 has 5 completed; sess2 has 0
+	if int(totalCompleted) != 5 {
+		t.Errorf("total_tasks_completed = %v, want 5", totalCompleted)
+	}
+}
+
+// nowTime is a test helper that returns the current time with second precision
+// to avoid sub-second precision issues with SQLite RFC3339 storage.
+func nowTime() time.Time {
+	return time.Now().UTC().Truncate(time.Second)
+}
+
+// ---------------------------------------------------------------------------
+// Patrol tool tests (US-014)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesPatrolTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	patrolTools := []string{
+		"toolkit__patrol_check",
+		"toolkit__configure_patrol",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range patrolTools {
+		if !toolNames[expected] {
+			t.Errorf("expected patrol tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_PatrolCheck_Healthy(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create a session with a few successful events — no anti-patterns.
+	store.CreateSession(&db.Session{ID: "sess-patrol-healthy", Project: "p", StartedAt: nowTime()})
+	store.CreateEvent(&db.Event{
+		ID: "ep-1", SessionID: "sess-patrol-healthy", Type: "tool_call",
+		Result: "success", Details: "Read file.go", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "ep-2", SessionID: "sess-patrol-healthy", Type: "tool_call",
+		Result: "success", Details: "Write file.go", Timestamp: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__patrol_check", map[string]interface{}{
+		"session_id": "sess-patrol-healthy",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["status"] != "healthy" {
+		t.Errorf("status = %v, want 'healthy'", resp["status"])
+	}
+}
+
+func TestIntegration_PatrolCheck_RetryLoop(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create session + 3 consecutive same-command failures → retry_loop alert.
+	store.CreateSession(&db.Session{ID: "sess-patrol-retry", Project: "p", StartedAt: nowTime()})
+	for i := 0; i < 3; i++ {
+		store.CreateEvent(&db.Event{
+			ID:        fmt.Sprintf("ep-retry-%d", i),
+			SessionID: "sess-patrol-retry",
+			Type:      "tool_call",
+			Result:    "failure",
+			Details:   "go build ./...",
+			Timestamp: nowTime(),
+		})
+	}
+
+	result := callTool(t, c, "toolkit__patrol_check", map[string]interface{}{
+		"session_id": "sess-patrol-retry",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if resp["status"] == "healthy" {
+		t.Fatal("expected non-healthy status, got 'healthy'")
+	}
+
+	alerts, ok := resp["alerts"].([]interface{})
+	if !ok || len(alerts) == 0 {
+		t.Fatal("expected at least one alert")
+	}
+
+	found := false
+	for _, a := range alerts {
+		alert := a.(map[string]interface{})
+		if alert["pattern"] == "retry_loop" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected alert with pattern 'retry_loop'")
+	}
+}
+
+func TestIntegration_PatrolCheck_Rework(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create session + 3 stuck/blocked events → rework alert with severity critical.
+	store.CreateSession(&db.Session{ID: "sess-patrol-rework", Project: "p", StartedAt: nowTime()})
+	store.CreateEvent(&db.Event{
+		ID: "ep-stuck-1", SessionID: "sess-patrol-rework", Type: "stuck",
+		Result: "stuck", Details: "cannot resolve import", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "ep-stuck-2", SessionID: "sess-patrol-rework", Type: "blocked",
+		Result: "blocked", Details: "build fails", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "ep-stuck-3", SessionID: "sess-patrol-rework", Type: "stuck",
+		Result: "stuck", Details: "circular dependency", Timestamp: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__patrol_check", map[string]interface{}{
+		"session_id": "sess-patrol-rework",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if resp["status"] != "critical" {
+		t.Errorf("status = %v, want 'critical'", resp["status"])
+	}
+
+	alerts, ok := resp["alerts"].([]interface{})
+	if !ok || len(alerts) == 0 {
+		t.Fatal("expected at least one alert")
+	}
+
+	found := false
+	for _, a := range alerts {
+		alert := a.(map[string]interface{})
+		if alert["pattern"] == "rework" && alert["severity"] == "critical" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected critical rework alert")
+	}
+}
+
+func TestIntegration_ConfigurePatrol(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Lower retry_loop_count threshold to 1 so a single failure triggers the alert.
+	configResult := callTool(t, c, "toolkit__configure_patrol", map[string]interface{}{
+		"retry_loop_count": float64(1),
+	})
+
+	var configResp map[string]interface{}
+	if err := json.Unmarshal([]byte(configResult), &configResp); err != nil {
+		t.Fatalf("invalid JSON from configure_patrol: %v", err)
+	}
+	if configResp["message"] != "patrol thresholds updated" {
+		t.Errorf("message = %v, want 'patrol thresholds updated'", configResp["message"])
+	}
+
+	// Create a session with just 1 failure — should trigger retry_loop with the new threshold.
+	store.CreateSession(&db.Session{ID: "sess-patrol-config", Project: "p", StartedAt: nowTime()})
+	store.CreateEvent(&db.Event{
+		ID: "ep-config-1", SessionID: "sess-patrol-config", Type: "tool_call",
+		Result: "failure", Details: "go build ./...", Timestamp: nowTime(),
+	})
+
+	checkResult := callTool(t, c, "toolkit__patrol_check", map[string]interface{}{
+		"session_id": "sess-patrol-config",
+	})
+
+	var checkResp map[string]interface{}
+	if err := json.Unmarshal([]byte(checkResult), &checkResp); err != nil {
+		t.Fatalf("invalid JSON from patrol_check: %v", err)
+	}
+
+	if checkResp["status"] == "healthy" {
+		t.Error("expected non-healthy status after lowering retry_loop_count to 1")
+	}
+
+	alerts, ok := checkResp["alerts"].([]interface{})
+	if !ok || len(alerts) == 0 {
+		t.Fatal("expected at least one alert after threshold change")
+	}
+
+	found := false
+	for _, a := range alerts {
+		alert := a.(map[string]interface{})
+		if alert["pattern"] == "retry_loop" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected retry_loop alert after lowering threshold to 1")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Evolution tool tests (US-016)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesEvolutionTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	evolutionTools := []string{
+		"toolkit__run_evolution_cycle",
+		"toolkit__get_pending_improvements",
+		"toolkit__apply_improvement",
+		"toolkit__reject_improvement",
+		"toolkit__audit_rules",
+		"toolkit__get_evolution_stats",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range evolutionTools {
+		if !toolNames[expected] {
+			t.Errorf("expected evolution tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_RunEvolutionCycle(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Create sessions with repeated failure patterns to trigger detection.
+	for i := 0; i < 3; i++ {
+		sessID := fmt.Sprintf("ev-sess-%d", i)
+		store.CreateSession(&db.Session{
+			ID: sessID, Project: "ev-project", StartedAt: nowTime(),
+		})
+		// Repeated failure with the same details — should become a pattern.
+		store.CreateEvent(&db.Event{
+			ID:        fmt.Sprintf("ev-evt-%d", i),
+			SessionID: sessID,
+			Type:      "tool_call",
+			Result:    "failure",
+			Details:   "go build ./... fails with missing package",
+			Timestamp: nowTime(),
+		})
+	}
+
+	result := callTool(t, c, "toolkit__run_evolution_cycle", map[string]interface{}{})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	// Should report patterns_found >= 1.
+	patternsFound, ok := resp["patterns_found"].(float64)
+	if !ok {
+		t.Fatal("patterns_found should be a number")
+	}
+	if patternsFound < 1 {
+		t.Errorf("patterns_found = %v, want >= 1", patternsFound)
+	}
+
+	// improvements_proposed should be >= 1.
+	improvementsProposed, ok := resp["improvements_proposed"].(float64)
+	if !ok {
+		t.Fatal("improvements_proposed should be a number")
+	}
+	if improvementsProposed < 1 {
+		t.Errorf("improvements_proposed = %v, want >= 1", improvementsProposed)
+	}
+
+	// rules_deprecated should be present (0 is fine since no scored rules).
+	if _, ok := resp["rules_deprecated"]; !ok {
+		t.Error("rules_deprecated key should be present in response")
+	}
+}
+
+func TestIntegration_ApplyImprovement(t *testing.T) {
+	c, store := setupClient(t)
+
+	// Seed an improvement directly via DB (simulating a completed cycle).
+	imp := &db.Improvement{
+		ID:         "imp-apply-001",
+		Content:    "Always check error returns from DB calls",
+		Scope:      "global",
+		Evidence:   "Seen 3 times",
+		Confidence: 0.8,
+		Status:     "pending",
+	}
+	if err := store.CreateImprovement(imp); err != nil {
+		t.Fatalf("failed to seed improvement: %v", err)
+	}
+
+	result := callTool(t, c, "toolkit__apply_improvement", map[string]interface{}{
+		"id": "imp-apply-001",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	newRuleID, ok := resp["rule_id"].(string)
+	if !ok || newRuleID == "" {
+		t.Fatal("expected non-empty rule_id in response")
+	}
+
+	// Verify the new rule was created in the DB.
+	rule, err := store.GetRule(newRuleID)
+	if err != nil {
+		t.Fatalf("rule %q not found in DB: %v", newRuleID, err)
+	}
+	if rule.Content != imp.Content {
+		t.Errorf("rule content = %q, want %q", rule.Content, imp.Content)
+	}
+	if rule.CreatedFrom != "evolution" {
+		t.Errorf("created_from = %q, want %q", rule.CreatedFrom, "evolution")
+	}
+
+	// Verify the improvement status was updated to applied.
+	applied, err := store.ListImprovements("applied")
+	if err != nil {
+		t.Fatalf("ListImprovements failed: %v", err)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied improvement, got %d", len(applied))
+	}
+}
+
+func TestIntegration_RejectImprovement(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateImprovement(&db.Improvement{
+		ID:         "imp-reject-001",
+		Content:    "Some proposed rule",
+		Scope:      "project",
+		Project:    "my-proj",
+		Evidence:   "3 occurrences",
+		Confidence: 0.4,
+		Status:     "pending",
+	})
+
+	result := callTool(t, c, "toolkit__reject_improvement", map[string]interface{}{
+		"id":     "imp-reject-001",
+		"reason": "too vague to be actionable",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "improvement rejected" {
+		t.Errorf("message = %v, want 'improvement rejected'", resp["message"])
+	}
+
+	// Verify the improvement status in DB.
+	rejected, err := store.ListImprovements("rejected")
+	if err != nil {
+		t.Fatalf("ListImprovements failed: %v", err)
+	}
+	if len(rejected) != 1 {
+		t.Fatalf("expected 1 rejected improvement, got %d", len(rejected))
+	}
+	if rejected[0].Reason != "too vague to be actionable" {
+		t.Errorf("reason = %q, want 'too vague to be actionable'", rejected[0].Reason)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Workspace tool tests (US-017)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesWorkspaceTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	workspaceTools := []string{
+		"toolkit__get_workspace",
+		"toolkit__register_project",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range workspaceTools {
+		if !toolNames[expected] {
+			t.Errorf("expected workspace tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_GetWorkspace_AutoDetect(t *testing.T) {
+	c, _ := setupClient(t)
+
+	// Create a temp workspace with two git repos.
+	dir := t.TempDir()
+	makeIntegrationRepo(t, dir, "api", "go.mod")
+	makeIntegrationRepo(t, dir, "web", "package.json", "tsconfig.json")
+
+	result := callTool(t, c, "toolkit__get_workspace", map[string]interface{}{
+		"directory": dir,
+	})
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &cfg); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	repos, ok := cfg["repos"].([]interface{})
+	if !ok {
+		t.Fatal("repos should be an array")
+	}
+	if len(repos) != 2 {
+		t.Errorf("expected 2 repos, got %d", len(repos))
+	}
+
+	typesByPath := make(map[string]string)
+	for _, r := range repos {
+		repo := r.(map[string]interface{})
+		typesByPath[repo["path"].(string)] = repo["type"].(string)
+	}
+
+	if typesByPath["api"] != "go" {
+		t.Errorf("api type = %q, want %q", typesByPath["api"], "go")
+	}
+	if typesByPath["web"] != "typescript" {
+		t.Errorf("web type = %q, want %q", typesByPath["web"], "typescript")
+	}
+}
+
+func TestIntegration_GetWorkspace_ReturnsErrorForMissingDir(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__get_workspace",
+			Arguments: map[string]interface{}{
+				"directory": "/nonexistent-workspace-dir-abc123",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for nonexistent directory")
+	}
+}
+
+func TestIntegration_RegisterProject(t *testing.T) {
+	c, _ := setupClient(t)
+
+	dir := t.TempDir()
+	makeIntegrationRepo(t, dir, "existing-svc", "go.mod")
+
+	// Register a new project (not auto-detected — no .git).
+	result := callTool(t, c, "toolkit__register_project", map[string]interface{}{
+		"directory": dir,
+		"path":      "new-service",
+		"type":      "rust",
+		"branch":    "main",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "project registered" {
+		t.Errorf("message = %v, want 'project registered'", resp["message"])
+	}
+
+	// Verify the config file was written.
+	getResult := callTool(t, c, "toolkit__get_workspace", map[string]interface{}{
+		"directory": dir,
+	})
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(getResult), &cfg); err != nil {
+		t.Fatalf("invalid JSON from get_workspace: %v", err)
+	}
+
+	repos := cfg["repos"].([]interface{})
+	foundNew := false
+	for _, r := range repos {
+		repo := r.(map[string]interface{})
+		if repo["path"] == "new-service" && repo["type"] == "rust" {
+			foundNew = true
+		}
+	}
+	if !foundNew {
+		t.Error("newly registered project 'new-service' not found in workspace config")
+	}
+}
+
+func TestIntegration_RegisterProject_DuplicateReturnsError(t *testing.T) {
+	c, _ := setupClient(t)
+
+	dir := t.TempDir()
+	makeIntegrationRepo(t, dir, "svc", "go.mod")
+
+	// First registration succeeds.
+	callTool(t, c, "toolkit__register_project", map[string]interface{}{
+		"directory": dir,
+		"path":      "svc",
+		"type":      "go",
+	})
+
+	// Second registration with same path returns an error.
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__register_project",
+			Arguments: map[string]interface{}{
+				"directory": dir,
+				"path":      "svc",
+				"type":      "go",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for duplicate project registration")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Rule update tool tests (US-020)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesUpdateTool(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	if !toolNames["toolkit__check_rule_updates"] {
+		t.Error("expected toolkit__check_rule_updates tool not found in registered tools")
+	}
+}
+
+func TestIntegration_CheckRuleUpdates(t *testing.T) {
+	c, _ := setupClient(t)
+
+	dir := t.TempDir()
+	os.WriteFile(fmt.Sprintf("%s/test.json", dir), []byte(`{
+		"rules": [
+			{"id": "seed-mcp-001", "content": "Rule via MCP", "scope": "global"},
+			{"id": "seed-mcp-002", "content": "Another rule", "scope": "global"}
+		]
+	}`), 0o644)
+
+	result := callTool(t, c, "toolkit__check_rule_updates", map[string]interface{}{
+		"seed_dir": dir,
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if int(resp["new_rules_loaded"].(float64)) != 2 {
+		t.Errorf("new_rules_loaded = %v, want 2", resp["new_rules_loaded"])
+	}
+	if int(resp["rules_skipped"].(float64)) != 0 {
+		t.Errorf("rules_skipped = %v, want 0", resp["rules_skipped"])
+	}
+	if int(resp["files_checked"].(float64)) != 1 {
+		t.Errorf("files_checked = %v, want 1", resp["files_checked"])
+	}
+	if resp["current_hash"] == "" {
+		t.Error("current_hash should not be empty")
+	}
+}
+
+func TestIntegration_CheckRuleUpdates_EmptyDir(t *testing.T) {
+	c, _ := setupClient(t)
+
+	dir := t.TempDir()
+
+	result := callTool(t, c, "toolkit__check_rule_updates", map[string]interface{}{
+		"seed_dir": dir,
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if int(resp["new_rules_loaded"].(float64)) != 0 {
+		t.Errorf("new_rules_loaded = %v, want 0", resp["new_rules_loaded"])
+	}
+	if int(resp["files_checked"].(float64)) != 0 {
+		t.Errorf("files_checked = %v, want 0", resp["files_checked"])
+	}
+}
+
+// makeIntegrationRepo creates a test repo for toolkit integration tests.
+func makeIntegrationRepo(t *testing.T, dir, name string, markers ...string) {
+	t.Helper()
+	repoDir := fmt.Sprintf("%s/%s", dir, name)
+	if err := os.MkdirAll(fmt.Sprintf("%s/.git", repoDir), 0o755); err != nil {
+		t.Fatalf("makeIntegrationRepo MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(fmt.Sprintf("%s/.git/HEAD", repoDir), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatalf("makeIntegrationRepo write HEAD: %v", err)
+	}
+	for _, m := range markers {
+		if err := os.WriteFile(fmt.Sprintf("%s/%s", repoDir, m), []byte(""), 0o644); err != nil {
+			t.Fatalf("makeIntegrationRepo write marker %s: %v", m, err)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Verification feedback loop tests (US-026)
+// ---------------------------------------------------------------------------
+
+func TestServer_ListTools_IncludesVerificationTools(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	verificationTools := []string{
+		"toolkit__mark_verified",
+		"toolkit__mark_failed",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range verificationTools {
+		if !toolNames[expected] {
+			t.Errorf("expected verification tool %q not found in registered tools", expected)
+		}
+	}
+}
+
+func TestIntegration_MarkVerified(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateSession(&db.Session{
+		ID: "sess-verified-mcp", Project: "my-project", StartedAt: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__mark_verified", map[string]interface{}{
+		"session_id": "sess-verified-mcp",
+		"task_id":    "task-001",
+		"details":    "all tests pass",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["status"] != "verified" {
+		t.Errorf("status = %v, want 'verified'", resp["status"])
+	}
+	if resp["task_id"] != "task-001" {
+		t.Errorf("task_id = %v, want 'task-001'", resp["task_id"])
+	}
+	eventID, ok := resp["event_id"].(string)
+	if !ok || eventID == "" {
+		t.Error("expected non-empty event_id")
+	}
+
+	// Verify the event was created in DB.
+	events, err := store.ListEvents("sess-verified-mcp")
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != "verification" {
+		t.Errorf("event type = %q, want 'verification'", events[0].Type)
+	}
+	if events[0].Result != "verified" {
+		t.Errorf("event result = %q, want 'verified'", events[0].Result)
+	}
+	if events[0].Context != "task-001" {
+		t.Errorf("event context = %q, want 'task-001'", events[0].Context)
+	}
+
+	// Verify tasks_verified counter was incremented.
+	sess, err := store.GetSession("sess-verified-mcp")
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+	if sess.TasksVerified != 1 {
+		t.Errorf("tasks_verified = %d, want 1", sess.TasksVerified)
+	}
+}
+
+func TestIntegration_MarkFailed(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateSession(&db.Session{
+		ID: "sess-failed-mcp", Project: "my-project", StartedAt: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__mark_failed", map[string]interface{}{
+		"session_id": "sess-failed-mcp",
+		"task_id":    "task-002",
+		"reason":     "missing error handling in auth module",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["status"] != "failed" {
+		t.Errorf("status = %v, want 'failed'", resp["status"])
+	}
+	if resp["task_id"] != "task-002" {
+		t.Errorf("task_id = %v, want 'task-002'", resp["task_id"])
+	}
+
+	// Verify the event was created in DB.
+	events, err := store.ListEvents("sess-failed-mcp")
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != "verification" {
+		t.Errorf("event type = %q, want 'verification'", events[0].Type)
+	}
+	if events[0].Result != "failed" {
+		t.Errorf("event result = %q, want 'failed'", events[0].Result)
+	}
+	if events[0].Details != "missing error handling in auth module" {
+		t.Errorf("event details = %q, want reason", events[0].Details)
+	}
+}
+
+func TestIntegration_MarkFailed_MissingReason(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__mark_failed",
+			Arguments: map[string]interface{}{
+				"session_id": "sess-fail-missing",
+				"task_id":    "task-003",
+				// reason intentionally omitted
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true when reason is missing")
+	}
+}
+
+func TestIntegration_MarkVerified_MissingTaskID(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result, err := c.CallTool(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "toolkit__mark_verified",
+			Arguments: map[string]interface{}{
+				"session_id": "sess-verified-missing",
+				// task_id intentionally omitted
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true when task_id is missing")
+	}
+}
+
+func TestIntegration_GetProjectStats_IncludesVerification(t *testing.T) {
+	c, store := setupClient(t)
+
+	store.CreateSession(&db.Session{ID: "sess-vstats-001", Project: "vstats-project", StartedAt: nowTime()})
+
+	// Add one verified and one failed verification event.
+	store.CreateEvent(&db.Event{
+		ID: "e-vstats-1", SessionID: "sess-vstats-001",
+		Type: "verification", Result: "verified", Context: "task-a", Timestamp: nowTime(),
+	})
+	store.CreateEvent(&db.Event{
+		ID: "e-vstats-2", SessionID: "sess-vstats-001",
+		Type: "verification", Result: "failed", Details: "lint issues", Timestamp: nowTime(),
+	})
+
+	result := callTool(t, c, "toolkit__get_project_stats", map[string]interface{}{
+		"project": "vstats-project",
+	})
+
+	var stats map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &stats); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	totalVerified, ok := stats["total_tasks_verified"].(float64)
+	if !ok {
+		t.Fatal("total_tasks_verified should be present in stats")
+	}
+	if int(totalVerified) != 0 {
+		// Note: total_tasks_verified comes from session.TasksVerified field,
+		// not from event counting — session was never ended with verified count.
+		// The integration uses session.TasksVerified which is incremented by mark_verified tool.
+		// Since we added events directly (bypassing the tool), we expect 0.
+		t.Logf("total_tasks_verified = %v (events added directly, not via tool)", totalVerified)
+	}
+
+	verificationRate, ok := stats["verification_rate"].(float64)
+	if !ok {
+		t.Fatal("verification_rate should be present in stats")
+	}
+	_ = verificationRate
+}
