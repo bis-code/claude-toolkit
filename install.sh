@@ -125,15 +125,16 @@ if [ "$PREREQS_OK" = false ]; then
 fi
 
 # ─────────────────────────────────────────────
-# Step 1b: Install/update Go MCP server binary
+# Step 1b: Install/update Go binaries (MCP server + TUI dashboard)
 # ─────────────────────────────────────────────
 
-SERVER_BIN="$HOME/.claude/toolkit/bin/claude-toolkit-server"
+TOOLKIT_BIN_DIR="$HOME/.claude/toolkit/bin"
+SERVER_BIN="$TOOLKIT_BIN_DIR/claude-toolkit-server"
+TUI_BIN="$TOOLKIT_BIN_DIR/claude-toolkit-tui"
 SERVER_REPO="bis-code/claude-toolkit"
 
-install_server_binary() {
-  local target_dir="$HOME/.claude/toolkit/bin"
-  mkdir -p "$target_dir"
+install_go_binaries() {
+  mkdir -p "$TOOLKIT_BIN_DIR"
 
   # Detect platform
   local os_name arch_name
@@ -147,44 +148,68 @@ install_server_binary() {
     *)       arch_name="$arch_name" ;;
   esac
 
-  local binary_name="claude-toolkit-server-${os_name}-${arch_name}"
+  local server_binary_name="claude-toolkit-server-${os_name}-${arch_name}"
+  local tui_binary_name="claude-toolkit-tui-${os_name}-${arch_name}"
 
   # Try downloading from GitHub releases
+  local downloaded_server=false
+  local downloaded_tui=false
   if command -v gh &>/dev/null; then
     local latest_tag
     latest_tag=$(gh release list --repo "$SERVER_REPO" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
     if [ -n "$latest_tag" ]; then
-      info "Downloading server binary ($os_name/$arch_name) from release $latest_tag..."
-      if gh release download "$latest_tag" --repo "$SERVER_REPO" --pattern "$binary_name" --dir "$target_dir" --clobber 2>/dev/null; then
-        mv "$target_dir/$binary_name" "$SERVER_BIN"
+      info "Downloading binaries ($os_name/$arch_name) from release $latest_tag..."
+      if gh release download "$latest_tag" --repo "$SERVER_REPO" --pattern "$server_binary_name" --dir "$TOOLKIT_BIN_DIR" --clobber 2>/dev/null; then
+        mv "$TOOLKIT_BIN_DIR/$server_binary_name" "$SERVER_BIN"
         chmod +x "$SERVER_BIN"
-        info "Server binary installed: $SERVER_BIN"
+        downloaded_server=true
+      fi
+      if gh release download "$latest_tag" --repo "$SERVER_REPO" --pattern "$tui_binary_name" --dir "$TOOLKIT_BIN_DIR" --clobber 2>/dev/null; then
+        mv "$TOOLKIT_BIN_DIR/$tui_binary_name" "$TUI_BIN"
+        chmod +x "$TUI_BIN"
+        downloaded_tui=true
+      fi
+      if $downloaded_server; then
+        info "Server binary installed from release"
+      fi
+      if $downloaded_tui; then
+        info "TUI binary installed from release"
+      fi
+      if $downloaded_server && $downloaded_tui; then
         return 0
       fi
-      warn "Binary not found in release, trying fallback..."
+      [ "$downloaded_server" = false ] && warn "Server binary not in release, trying source build..."
     fi
   fi
 
   # Fallback: build from source if Go is available
   if command -v go &>/dev/null; then
-    info "Building server from source..."
     local server_src="$TOOLKIT_DIR/server"
     if [ -d "$server_src" ]; then
-      (cd "$server_src" && go build -o "$SERVER_BIN" ./cmd/server/) 2>&1
-      if [ $? -eq 0 ]; then
-        info "Server binary built: $SERVER_BIN"
-        return 0
-      else
-        error "Failed to build server binary"
-        return 1
+      if [ "$downloaded_server" = false ]; then
+        info "Building server from source..."
+        if (cd "$server_src" && go build -o "$SERVER_BIN" ./cmd/server/) 2>&1; then
+          info "Server binary built"
+        else
+          error "Failed to build server binary"
+        fi
       fi
+      if [ "$downloaded_tui" = false ]; then
+        info "Building TUI from source..."
+        if (cd "$server_src" && go build -o "$TUI_BIN" ./cmd/tui/) 2>&1; then
+          info "TUI binary built"
+        else
+          warn "Failed to build TUI binary (optional)"
+        fi
+      fi
+      return 0
     else
       warn "Server source not found at $server_src"
       return 1
     fi
   fi
 
-  warn "Cannot install server binary (no release found and Go not available)"
+  warn "Cannot install binaries (no release found and Go not available)"
   warn "Install Go (https://go.dev) or wait for a release with pre-built binaries"
   return 1
 }
@@ -208,13 +233,58 @@ verify_server_health() {
   fi
 }
 
-header "1b" "Go MCP Server"
-if [ -x "$SERVER_BIN" ] && [ "$MODE" != "update" ]; then
-  info "Server binary already installed: $SERVER_BIN"
+setup_path() {
+  # Create symlinks in /usr/local/bin if writable, otherwise add to shell profile
+  local link_dir="/usr/local/bin"
+
+  if [ -w "$link_dir" ]; then
+    # Symlink approach (preferred — no PATH changes needed)
+    if [ -x "$SERVER_BIN" ]; then
+      ln -sf "$SERVER_BIN" "$link_dir/claude-toolkit-server"
+    fi
+    if [ -x "$TUI_BIN" ]; then
+      ln -sf "$TUI_BIN" "$link_dir/claude-toolkit-tui"
+    fi
+    info "Commands available: claude-toolkit-server, claude-toolkit-tui"
+    return 0
+  fi
+
+  # Fallback: add bin dir to PATH via shell profile
+  local path_line="export PATH=\"\$HOME/.claude/toolkit/bin:\$PATH\""
+  local profile=""
+
+  if [ -f "$HOME/.zshrc" ]; then
+    profile="$HOME/.zshrc"
+  elif [ -f "$HOME/.bashrc" ]; then
+    profile="$HOME/.bashrc"
+  elif [ -f "$HOME/.bash_profile" ]; then
+    profile="$HOME/.bash_profile"
+  fi
+
+  if [ -n "$profile" ]; then
+    if ! grep -q '.claude/toolkit/bin' "$profile" 2>/dev/null; then
+      echo "" >> "$profile"
+      echo "# Claude Toolkit" >> "$profile"
+      echo "$path_line" >> "$profile"
+      info "Added ~/.claude/toolkit/bin to PATH in $(basename "$profile")"
+      info "Run 'source $profile' or open a new terminal to use: claude-toolkit-tui"
+    else
+      info "PATH already configured in $(basename "$profile")"
+    fi
+  else
+    warn "Could not find shell profile — add manually: $path_line"
+  fi
+}
+
+header "1b" "Go Binaries"
+if [ -x "$SERVER_BIN" ] && [ -x "$TUI_BIN" ] && [ "$MODE" != "update" ]; then
+  info "Server binary: $SERVER_BIN"
+  info "TUI binary: $TUI_BIN"
 else
-  install_server_binary || true  # Server is optional — continue without it
+  install_go_binaries || true  # Binaries are optional — continue without them
 fi
 verify_server_health || true
+setup_path || true
 
 # ─────────────────────────────────────────────
 # Uninstall: remove all toolkit files and exit
@@ -297,12 +367,21 @@ if [ "$MODE" = "uninstall" ]; then
     fi
   fi
 
-  # Remove server binary
-  if [ -x "$HOME/.claude/toolkit/bin/claude-toolkit-server" ]; then
-    rm -f "$HOME/.claude/toolkit/bin/claude-toolkit-server"
-    rmdir "$HOME/.claude/toolkit/bin" 2>/dev/null || true
-    info "Removed server binary"
-  fi
+  # Remove binaries and symlinks
+  local link_dir="/usr/local/bin"
+  for bin_name in claude-toolkit-server claude-toolkit-tui; do
+    rm -f "$HOME/.claude/toolkit/bin/$bin_name"
+    # Remove symlink if it points to our binary
+    if [ -L "$link_dir/$bin_name" ]; then
+      local target
+      target=$(readlink "$link_dir/$bin_name" 2>/dev/null || echo "")
+      if echo "$target" | grep -q '.claude/toolkit/bin' 2>/dev/null; then
+        rm -f "$link_dir/$bin_name" 2>/dev/null || true
+      fi
+    fi
+  done
+  rmdir "$HOME/.claude/toolkit/bin" 2>/dev/null || true
+  info "Removed toolkit binaries"
 
   echo ""
   echo -e "${GREEN}${BOLD}Done!${NC} Toolkit uninstalled from $(basename "$PROJECT_DIR")."
@@ -865,6 +944,7 @@ CMD_COUNT=$(ls "$TOOLKIT_DIR/commands/"*.md 2>/dev/null | wc -l | tr -d ' ')
 echo -e "    ${GREEN}✓${NC} ${CMD_COUNT} slash commands"
 echo -e "    ${GREEN}✓${NC} MCP: ${INSTALLED_MCP_LIST:-none}"
 [ -x "$SERVER_BIN" ] && echo -e "    ${GREEN}✓${NC} MCP server → Dashboard at ${BLUE}localhost:19280${NC}"
+[ -x "$TUI_BIN" ]    && echo -e "    ${GREEN}✓${NC} TUI dashboard → run ${BLUE}claude-toolkit-tui${NC}"
 [ "$READ_ONLY" = true ] && echo -e "    ${YELLOW}!${NC} Read-only mode"
 echo ""
 
@@ -880,6 +960,31 @@ echo "    /ralph --issues 1,2    Build features from GitHub issues"
 echo "    /qa                    Scan and fix quality issues"
 echo "    /plan                  Plan implementation approach"
 echo "    /code-review           Review recent changes"
+echo ""
+echo -e "  ${BOLD}Analysis & review:${NC}"
+echo "    /deep-dive             Deep codebase exploration & analysis"
+echo "    /security-review       OWASP-focused security scan"
+echo "    /architect-review      Module boundaries & coupling analysis"
+echo "    /performance-review    N+1 queries, blocking ops, resource leaks"
+echo "    /incident-debug        Structured hypothesis-driven debugging"
+echo ""
+echo -e "  ${BOLD}Implementation:${NC}"
+echo "    /tdd-workflow          Red-green-refactor with verification"
+echo "    /refactor-clean        Dead code removal & consolidation"
+echo "    /build-fix             Diagnose and fix build errors"
+echo "    /docs                  Update docs after code changes"
+echo ""
+echo -e "  ${BOLD}Creators:${NC}"
+echo "    /skill-creator         Build a new skill (SOP with human gates)"
+echo "    /agent-creator         Build a new agent (behavioral spec)"
+echo "    /rule-creator          Build a new rule (constraint doc)"
+echo ""
+echo -e "  ${BOLD}Utilities:${NC}"
+echo "    /search                Semantic + grep codebase search"
+echo "    /verify                Run tests, lint, type-check"
+echo "    /checkpoint            Save progress state"
+echo "    /learn                 Extract patterns from session"
+echo "    /ship-day              Squash commits & create PR"
 echo ""
 echo -e "  Update:    ${BLUE}$TOOLKIT_DIR/install.sh --update${NC}"
 echo -e "  Uninstall: ${BLUE}$TOOLKIT_DIR/install.sh --uninstall${NC}"

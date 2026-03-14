@@ -76,6 +76,7 @@ type model struct {
 	height     int
 	sessions   []*db.Session
 	events     []db.Event
+	rules      []db.Rule
 	skills     []db.SkillScore
 	workflows  []db.WorkflowEvent
 	lastUpdate time.Time
@@ -86,6 +87,7 @@ type tickMsg time.Time
 type dataMsg struct {
 	sessions  []*db.Session
 	events    []db.Event
+	rules     []db.Rule
 	skills    []db.SkillScore
 	workflows []db.WorkflowEvent
 }
@@ -98,6 +100,7 @@ func tickCmd() tea.Cmd {
 
 func (m model) fetchData() tea.Msg {
 	sessions, _ := m.store.ListSessions("", 10)
+	rules, _ := m.store.ListRules("", "", "")
 	skills, _ := m.store.ListSkillScores()
 
 	var events []db.Event
@@ -119,7 +122,7 @@ func (m model) fetchData() tea.Msg {
 		}
 	}
 
-	return dataMsg{sessions: sessions, events: events, skills: skills, workflows: workflows}
+	return dataMsg{sessions: sessions, events: events, rules: rules, skills: skills, workflows: workflows}
 }
 
 func initialModel(store *db.Store) model {
@@ -134,15 +137,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "x", "ctrl+c":
 			return m, tea.Quit
-		case "s":
+		case "1", "s":
 			m.activeTab = tabSessions
-		case "r":
+		case "2", "r":
 			m.activeTab = tabRules
-		case "p":
+		case "3", "p":
 			m.activeTab = tabPatrol
-		case "l":
+		case "4", "l":
 			m.activeTab = tabLearning
 		}
 	case tea.WindowSizeMsg:
@@ -153,6 +156,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dataMsg:
 		m.sessions = msg.sessions
 		m.events = msg.events
+		m.rules = msg.rules
 		m.skills = msg.skills
 		m.workflows = msg.workflows
 		m.lastUpdate = time.Now()
@@ -188,7 +192,7 @@ func (m model) View() string {
 			dur = s.EndedAt.Sub(s.StartedAt).Round(time.Second).String()
 		}
 		sessionLine := fmt.Sprintf("● %s  %s  %s  events: %d",
-			accentStyle.Render(s.ID[:8]),
+			accentStyle.Render(shortID(s.ID)),
 			headerStyle.Render(s.Project),
 			mutedStyle.Render(dur),
 			s.TasksCompleted+s.TasksFailed)
@@ -213,10 +217,10 @@ func (m model) View() string {
 		label string
 		t     tab
 	}{
-		{"s", "sessions", tabSessions},
-		{"r", "rules/skills", tabRules},
-		{"p", "patrol", tabPatrol},
-		{"l", "learning", tabLearning},
+		{"1", "sessions", tabSessions},
+		{"2", "rules/skills", tabRules},
+		{"3", "patrol", tabPatrol},
+		{"4", "learning", tabLearning},
 	}
 
 	var tabParts []string
@@ -227,7 +231,7 @@ func (m model) View() string {
 			tabParts = append(tabParts, mutedStyle.Render(fmt.Sprintf("[%s]%s", t.key, t.label)))
 		}
 	}
-	tabParts = append(tabParts, dangerStyle.Render("[q]uit"))
+	tabParts = append(tabParts, dangerStyle.Render("[x]exit"))
 	sb.WriteString("\n" + strings.Join(tabParts, "  "))
 
 	return sb.String()
@@ -253,7 +257,7 @@ func (m model) renderSessions(w int) string {
 			dur = "active"
 		}
 		line := fmt.Sprintf("  %s  %-15s  %8s  %d events",
-			mutedStyle.Render(s.ID[:8]),
+			mutedStyle.Render(shortID(s.ID)),
 			s.Project,
 			dur,
 			s.TasksCompleted+s.TasksFailed)
@@ -283,33 +287,59 @@ func (m model) renderSessions(w int) string {
 
 func (m model) renderSkills(w int) string {
 	var sb strings.Builder
-	sb.WriteString(headerStyle.Render("Skill Effectiveness") + "\n")
 
-	if len(m.skills) == 0 {
-		sb.WriteString(mutedStyle.Render("  No skill data yet") + "\n")
-		return panelStyle.Width(w).Render(sb.String())
+	// Rules section
+	sb.WriteString(headerStyle.Render("Rules") + "\n")
+	if len(m.rules) == 0 {
+		sb.WriteString(mutedStyle.Render("  No rules yet") + "\n")
+	} else {
+		for i, r := range m.rules {
+			if i >= 10 {
+				sb.WriteString(mutedStyle.Render(fmt.Sprintf("  ... and %d more", len(m.rules)-10)) + "\n")
+				break
+			}
+			// Effectiveness indicator
+			eff := ""
+			if r.Effectiveness >= 0.7 {
+				eff = successStyle.Render("●")
+			} else if r.Effectiveness >= 0.4 {
+				eff = warningStyle.Render("●")
+			} else if r.Effectiveness > 0 {
+				eff = dangerStyle.Render("●")
+			} else {
+				eff = mutedStyle.Render("○")
+			}
+			scope := mutedStyle.Render(fmt.Sprintf("[%s]", r.Scope))
+			content := truncate(r.Content, w-30)
+			sb.WriteString(fmt.Sprintf("  %s %s %s\n", eff, scope, content))
+		}
 	}
 
-	for _, s := range m.skills {
-		barLen := int(s.Effectiveness * 10)
-		bar := strings.Repeat("█", barLen) + strings.Repeat("░", 10-barLen)
+	sb.WriteString("\n" + headerStyle.Render("Skill Effectiveness") + "\n")
+	if len(m.skills) == 0 {
+		sb.WriteString(mutedStyle.Render("  No skill data yet") + "\n")
+	} else {
+		for _, s := range m.skills {
+			barLen := int(s.Effectiveness * 10)
+			bar := strings.Repeat("█", barLen) + strings.Repeat("░", 10-barLen)
 
-		style := successStyle
-		warn := ""
-		if s.Effectiveness < 0.5 {
-			style = dangerStyle
-			warn = " ⚠"
-		} else if s.Effectiveness < 0.7 {
-			style = warningStyle
-			warn = " ⚠"
+			style := successStyle
+			warn := ""
+			if s.Effectiveness < 0.5 {
+				style = dangerStyle
+				warn = " ⚠"
+			} else if s.Effectiveness < 0.7 {
+				style = warningStyle
+				warn = " ⚠"
+			}
+
+			line := fmt.Sprintf("  %-20s %s %.2f%s",
+				s.Name,
+				style.Render(bar),
+				s.Effectiveness,
+				warn)
+			sb.WriteString(line + "\n")
 		}
-
-		line := fmt.Sprintf("  %-20s %s %.2f%s",
-			s.Name,
-			style.Render(bar),
-			s.Effectiveness,
-			warn)
-		sb.WriteString(line + "\n")
 	}
 
 	return panelStyle.Width(w).Render(sb.String())
@@ -371,6 +401,13 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+func shortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
 }
 
 func main() {
