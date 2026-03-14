@@ -132,8 +132,9 @@ function run(rawInput) {
 
     // Write skill score to DB
     const now = new Date().toISOString();
+    const safeSkill = skill.replace(/'/g, "''");
     dbExec(
-      `INSERT INTO skill_scores (name, effectiveness, invocations, last_scored_at) VALUES ('${skill}', ${score}, 1, '${now}') ON CONFLICT(name) DO UPDATE SET effectiveness = (effectiveness + ${score}) / 2.0, invocations = invocations + 1, last_scored_at = '${now}';`
+      `INSERT INTO skill_scores (skill, score, session_id, project, scored_at) VALUES ('${safeSkill}', ${score}, '${sessionId}', '${project}', '${now}');`
     );
 
     log(`[Toolkit] Session evaluated: ${skill} scored ${score}`);

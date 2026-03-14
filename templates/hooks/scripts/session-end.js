@@ -42,10 +42,8 @@ function run(rawInput) {
     });
     appendFile(TELEMETRY_FILE, event + '\n');
 
-    // Update session ended_at in DB
-    const now = new Date().toISOString();
-    dbExec(`UPDATE sessions SET ended_at = '${now}' WHERE id = '${sessionId}' AND ended_at IS NULL;`);
-    logEventToDb({ sessionId, type: 'session_end', details: `Project: ${project}` });
+    // Log the stop event (fires after each turn, not just on exit)
+    logEventToDb({ sessionId, type: 'stop', details: `Turn ended in ${project}` });
   } catch (err) {
     log(`[Toolkit] session-end error: ${err.message}`);
   }

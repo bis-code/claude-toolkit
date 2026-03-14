@@ -182,16 +182,21 @@ func (m model) View() string {
 		successStyle.Render("● Live")
 	sb.WriteString(header + "\n\n")
 
-	// Active session
+	// Active session — consider active if latest event is within 5 minutes
 	if len(m.sessions) > 0 {
 		s := m.sessions[0]
-		dur := ""
-		if s.EndedAt == nil {
-			dur = time.Since(s.StartedAt).Round(time.Second).String()
-		} else {
-			dur = s.EndedAt.Sub(s.StartedAt).Round(time.Second).String()
+		dur := time.Since(s.StartedAt).Round(time.Second).String()
+		active := len(m.events) > 0 && time.Since(m.events[len(m.events)-1].Timestamp).Minutes() < 5
+		if !active && s.EndedAt == nil {
+			// No recent events but no ended_at — check if started recently
+			active = time.Since(s.StartedAt).Minutes() < 5
 		}
-		sessionLine := fmt.Sprintf("● %s  %s  %s  events: %d",
+		status := successStyle.Render("● active")
+		if !active {
+			status = mutedStyle.Render("○ idle")
+		}
+		sessionLine := fmt.Sprintf("%s  %s  %s  %s  events: %d",
+			status,
 			accentStyle.Render(shortID(s.ID)),
 			headerStyle.Render(s.Project),
 			mutedStyle.Render(dur),
@@ -250,12 +255,7 @@ func (m model) renderSessions(w int) string {
 		if i >= 8 {
 			break
 		}
-		dur := ""
-		if s.EndedAt != nil {
-			dur = s.EndedAt.Sub(s.StartedAt).Round(time.Second).String()
-		} else {
-			dur = "active"
-		}
+		dur := time.Since(s.StartedAt).Round(time.Second).String()
 		line := fmt.Sprintf("  %s  %-15s  %8s  %d events",
 			mutedStyle.Render(shortID(s.ID)),
 			s.Project,

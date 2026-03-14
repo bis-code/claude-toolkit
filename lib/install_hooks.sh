@@ -55,9 +55,11 @@ merge_hooks_into_settings() {
 
   mkdir -p "$(dirname "$settings_file")"
 
-  # Extract just the hooks object from the template, tagged with _toolkit
+  # Extract hooks from template, tag with _toolkit, and use absolute paths
+  # $CLAUDE_PROJECT_DIR is expanded by the shell at hook runtime
   local toolkit_hooks
-  toolkit_hooks=$(jq '.hooks | with_entries(.value |= map(. + {"_toolkit": true}))' "$hooks_src")
+  toolkit_hooks=$(jq '.hooks | with_entries(.value |= map(. + {"_toolkit": true}))' "$hooks_src" \
+    | sed 's|node \.claude/|node $CLAUDE_PROJECT_DIR/.claude/|g')
 
   if [ ! -f "$settings_file" ]; then
     # No settings.json yet — create with hooks only
