@@ -342,10 +342,23 @@ if [ "$MODE" = "uninstall" ]; then
     info "~/.claude.json — removed toolkit servers (remaining: $REMAINING)"
   fi
 
-  # Remove hooks.json (installed via merge, not tracked in managedFiles)
+  # Remove hooks.json reference file
   if [ -f "$PROJECT_DIR/.claude/hooks/hooks.json" ]; then
     rm "$PROJECT_DIR/.claude/hooks/hooks.json"
     info "Removed .claude/hooks/hooks.json"
+  fi
+
+  # Remove toolkit hooks from .claude/settings.json
+  local settings_file="$PROJECT_DIR/.claude/settings.json"
+  if [ -f "$settings_file" ] && jq -e '.hooks' "$settings_file" &>/dev/null; then
+    jq '
+      .hooks |= with_entries(
+        .value |= map(select(._toolkit != true))
+      ) |
+      .hooks |= with_entries(select(.value | length > 0)) |
+      if (.hooks | length) == 0 then del(.hooks) else . end
+    ' "$settings_file" > "${settings_file}.tmp" && mv "${settings_file}.tmp" "$settings_file"
+    info "Removed toolkit hooks from settings.json"
   fi
 
   # Remove tools/ralph/ if it only contains toolkit files
