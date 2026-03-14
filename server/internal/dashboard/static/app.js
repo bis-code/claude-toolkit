@@ -114,12 +114,8 @@ function renderActiveSession() {
       <span class="stat__value ${statusClass}">${esc(status)}</span>
     </div>
     <div class="stat">
-      <span class="stat__label">Tasks ✓</span>
-      <span class="stat__value stat__value--success">${sess.tasks_completed}</span>
-    </div>
-    <div class="stat">
-      <span class="stat__label">Tasks ✗</span>
-      <span class="stat__value stat__value--danger">${sess.tasks_failed}</span>
+      <span class="stat__label">Events</span>
+      <span class="stat__value">${state.events.length}</span>
     </div>
   `;
 }
@@ -342,6 +338,10 @@ function debouncedRefresh() {
     loadSessions();
     loadSkills();
     loadPatterns();
+    // Auto-refresh patrol for the active session
+    const sel = $('patrol-session-select');
+    if (sel && sel.value) loadPatrol(sel.value);
+    else if (state.sessions.length > 0) loadPatrol(state.sessions[0].id);
   }, 2000);
 }
 

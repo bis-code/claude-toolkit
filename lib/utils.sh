@@ -26,11 +26,14 @@ check_cmd() {
 
 # Merge JSON key into .mcp.json without overwriting existing servers
 merge_mcp_server() {
-  local file="$1" name="$2" config="$3"
+  local file="$1" name="$2" config="$3" force="${4:-false}"
   if [ ! -f "$file" ]; then
     echo "{\"mcpServers\":{\"$name\":$config}}" | jq '.' > "$file"
+  elif [ "$force" = "true" ]; then
+    # Force update — overwrite existing entry (used for toolkit-owned servers on --update)
+    jq --arg name "$name" --argjson config "$config" '.mcpServers[$name] = $config' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
   elif jq -e ".mcpServers.\"$name\"" "$file" &>/dev/null; then
-    return 0  # Already exists — do not overwrite
+    return 0  # Already exists — do not overwrite user config
   else
     jq --arg name "$name" --argjson config "$config" '.mcpServers[$name] = $config' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
   fi

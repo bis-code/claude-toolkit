@@ -71,6 +71,10 @@ while [[ $# -gt 0 ]]; do
     --read-only)   READ_ONLY=true; shift ;;
     --workspace)   WORKSPACE_MODE=true; shift ;;
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
+    -v|--version)
+      echo "Claude Code Toolkit v$TOOLKIT_VERSION"
+      exit 0
+      ;;
     -h|--help)
       echo "Claude Code Toolkit Installer v$TOOLKIT_VERSION"
       echo ""
@@ -92,7 +96,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --workspace        Generate .claude-workspace.json from auto-detection"
       echo "  --dry-run          Show what would be installed without doing it"
       echo "  --project-dir DIR  Target directory (default: current or git root)"
-      echo "  -h, --help         Show this help"
+      echo "  -v, --version      Show version
+  -h, --help         Show this help"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -744,10 +749,14 @@ fi
 # Claude Code reads user MCPs from ~/.claude.json under .mcpServers key.
 USER_MCP="$HOME/.claude.json"
 
+# Force-update toolkit-owned servers so binary path stays current
+FORCE_MCP="false"
+[ "$MODE" = "update" ] && FORCE_MCP="true"
+
 if [ -x "$SERVER_BIN" ]; then
-  merge_mcp_server "$USER_MCP" "claude-toolkit" "{\"command\":\"$SERVER_BIN\",\"args\":[]}"
+  merge_mcp_server "$USER_MCP" "claude-toolkit" "{\"command\":\"$SERVER_BIN\",\"args\":[]}" "$FORCE_MCP"
 fi
-merge_mcp_server "$USER_MCP" "deep-think" '{"command":"mcp-deep-think","args":[]}'
+merge_mcp_server "$USER_MCP" "deep-think" '{"command":"mcp-deep-think","args":[]}' "$FORCE_MCP"
 
 if [ "$INSTALL_LEANN" = true ]; then
   merge_mcp_server "$USER_MCP" "leann-server" '{"command":"leann_mcp","args":[]}'

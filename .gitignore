@@ -13,3 +13,6 @@ tools/qa/qa-progress.txt
 # Deep-Think (session state)
 .deep-think/
 qa-report.json
+bin/
+server/server
+server/tui

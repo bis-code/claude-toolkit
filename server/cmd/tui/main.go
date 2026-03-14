@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/bis-code/claude-toolkit/server/internal/db"
+	"github.com/bis-code/claude-toolkit/server/internal/patrol"
+	"github.com/bis-code/claude-toolkit/server/internal/workflow"
 )
 
 // Tokyo Night colors
@@ -71,14 +73,18 @@ const (
 
 type model struct {
 	store      *db.Store
+	detector   *patrol.Detector
+	learner    *workflow.Learner
 	activeTab  tab
 	width      int
 	height     int
 	sessions   []*db.Session
 	events     []db.Event
+	allEvents  []*db.Event
 	rules      []db.Rule
 	skills     []db.SkillScore
 	workflows  []db.WorkflowEvent
+	analyzed   map[string]int // sessionID -> event count at last analysis
 	lastUpdate time.Time
 	err        error
 }
@@ -87,6 +93,7 @@ type tickMsg time.Time
 type dataMsg struct {
 	sessions  []*db.Session
 	events    []db.Event
+	allEvents []*db.Event
 	rules     []db.Rule
 	skills    []db.SkillScore
 	workflows []db.WorkflowEvent
@@ -104,14 +111,34 @@ func (m model) fetchData() tea.Msg {
 	skills, _ := m.store.ListSkillScores()
 
 	var events []db.Event
+	var allEvents []*db.Event
 	if len(sessions) > 0 {
 		evts, _ := m.store.ListEvents(sessions[0].ID)
-		if len(evts) > 10 {
-			evts = evts[len(evts)-10:]
+		allEvents = evts
+		display := evts
+		if len(display) > 10 {
+			display = display[len(display)-10:]
 		}
-		for _, e := range evts {
+		for _, e := range display {
 			events = append(events, *e)
 		}
+	}
+
+	// Run workflow learner on recent sessions that have new events.
+	// Only re-analyze when the event count has changed to avoid redundant DB writes.
+	for _, s := range sessions {
+		if s.Project == "" {
+			continue
+		}
+		evts, err := m.store.ListEvents(s.ID)
+		if err != nil || len(evts) < 3 {
+			continue // need a minimum number of events for meaningful patterns
+		}
+		if prev, ok := m.analyzed[s.ID]; ok && prev == len(evts) {
+			continue // already analyzed at this event count
+		}
+		m.learner.AnalyzeSession(s.ID, s.Project)
+		m.analyzed[s.ID] = len(evts)
 	}
 
 	var workflows []db.WorkflowEvent
@@ -122,11 +149,17 @@ func (m model) fetchData() tea.Msg {
 		}
 	}
 
-	return dataMsg{sessions: sessions, events: events, rules: rules, skills: skills, workflows: workflows}
+	return dataMsg{sessions: sessions, events: events, allEvents: allEvents, rules: rules, skills: skills, workflows: workflows}
 }
 
 func initialModel(store *db.Store) model {
-	return model{store: store, activeTab: tabSessions}
+	return model{
+		store:     store,
+		detector:  patrol.NewDetector(patrol.DefaultThresholds()),
+		learner:   workflow.NewLearner(store),
+		analyzed:  make(map[string]int),
+		activeTab: tabSessions,
+	}
 }
 
 func (m model) Init() tea.Cmd {
@@ -156,6 +189,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dataMsg:
 		m.sessions = msg.sessions
 		m.events = msg.events
+		m.allEvents = msg.allEvents
 		m.rules = msg.rules
 		m.skills = msg.skills
 		m.workflows = msg.workflows
@@ -348,8 +382,39 @@ func (m model) renderSkills(w int) string {
 func (m model) renderPatrol(w int) string {
 	var sb strings.Builder
 	sb.WriteString(headerStyle.Render("Patrol Status") + "\n")
-	sb.WriteString("  " + successStyle.Render("●") + " No active alerts\n")
-	sb.WriteString(mutedStyle.Render("  Patrol checks run automatically on session end") + "\n")
+
+	alerts := m.detector.Analyze(m.allEvents)
+
+	if len(alerts) == 0 {
+		sb.WriteString("  " + successStyle.Render("●") + " No active alerts\n")
+		sb.WriteString(mutedStyle.Render("  Patrol checks run automatically on session events") + "\n")
+		return panelStyle.Width(w).Render(sb.String())
+	}
+
+	for _, a := range alerts {
+		var icon string
+		var style lipgloss.Style
+		switch a.Severity {
+		case "critical":
+			icon = dangerStyle.Render("▲")
+			style = dangerStyle
+		case "warning":
+			icon = warningStyle.Render("●")
+			style = warningStyle
+		default:
+			icon = infoStyle.Render("●")
+			style = infoStyle
+		}
+
+		sb.WriteString(fmt.Sprintf("  %s %s %s\n",
+			icon,
+			style.Render(fmt.Sprintf("[%s]", a.Severity)),
+			a.Message))
+		sb.WriteString(fmt.Sprintf("    %s  events: %d\n",
+			mutedStyle.Render(a.Suggestion),
+			a.EventCount))
+	}
+
 	return panelStyle.Width(w).Render(sb.String())
 }
 
