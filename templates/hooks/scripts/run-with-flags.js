@@ -86,6 +86,16 @@ async function main() {
     try {
       // Pass hookId so scripts can detect pre vs post phase
       process.env.TOOLKIT_HOOK_ID = hookId;
+
+      // Extract session_id from payload and set as env var
+      // so getSessionId() returns the real Claude Code session ID
+      try {
+        const payload = JSON.parse(raw);
+        if (payload && payload.session_id) {
+          process.env.CLAUDE_SESSION_ID = payload.session_id;
+        }
+      } catch { /* ignore parse errors */ }
+
       const result = hookModule.run(raw);
       if (result !== null && result !== undefined) process.stdout.write(String(result));
     } catch (runErr) {
