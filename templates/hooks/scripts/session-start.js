@@ -12,7 +12,7 @@
  * Profiles: minimal, standard, strict
  */
 
-const { log, output, parseJSON, getProjectName, getSessionId, ensureSession, logEventToDb } = require('./lib/utils');
+const { log, parseJSON, getProjectName, getSessionId, ensureSession, logEventToDb } = require('./lib/utils');
 
 /**
  * @param {string} rawInput - Raw stdin JSON string from Claude Code
@@ -30,7 +30,6 @@ function run(rawInput) {
     logEventToDb({ sessionId, type: 'session_start', details: `Project: ${project}` });
 
     log(`[Toolkit] Session started (project: ${project}, session: ${sessionId})`);
-    output(`[Toolkit Context] Project: ${project}\n`);
   } catch (err) {
     // Never crash Claude Code — swallow and log
     log(`[Toolkit] session-start error: ${err.message}`);

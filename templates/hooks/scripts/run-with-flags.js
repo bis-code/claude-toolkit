@@ -84,6 +84,8 @@ async function main() {
 
   if (hookModule && typeof hookModule.run === 'function') {
     try {
+      // Pass hookId so scripts can detect pre vs post phase
+      process.env.TOOLKIT_HOOK_ID = hookId;
       const result = hookModule.run(raw);
       if (result !== null && result !== undefined) process.stdout.write(String(result));
     } catch (runErr) {
