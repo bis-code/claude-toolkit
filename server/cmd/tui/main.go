@@ -195,12 +195,13 @@ func (m model) View() string {
 		if !active {
 			status = mutedStyle.Render("○ idle")
 		}
+		eventCount := len(m.events)
 		sessionLine := fmt.Sprintf("%s  %s  %s  %s  events: %d",
 			status,
 			accentStyle.Render(shortID(s.ID)),
 			headerStyle.Render(s.Project),
 			mutedStyle.Render(dur),
-			s.TasksCompleted+s.TasksFailed)
+			eventCount)
 		sb.WriteString(panelStyle.Width(w).Render(sessionLine) + "\n\n")
 	}
 
@@ -256,11 +257,10 @@ func (m model) renderSessions(w int) string {
 			break
 		}
 		dur := time.Since(s.StartedAt).Round(time.Second).String()
-		line := fmt.Sprintf("  %s  %-15s  %8s  %d events",
+		line := fmt.Sprintf("  %s  %-15s  %s",
 			mutedStyle.Render(shortID(s.ID)),
 			s.Project,
-			dur,
-			s.TasksCompleted+s.TasksFailed)
+			dur)
 		sb.WriteString(line + "\n")
 	}
 
