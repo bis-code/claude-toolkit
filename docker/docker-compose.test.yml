@@ -1,0 +1,23 @@
+version: '3'
+
+services:
+  ubuntu:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ubuntu
+    environment:
+      - CI=true
+
+  debian:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.debian
+    environment:
+      - CI=true
+
+  alpine:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.alpine
+    environment:
+      - CI=true

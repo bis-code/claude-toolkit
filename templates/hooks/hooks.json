@@ -1,3 +1,114 @@
 {
-  "hooks": {}
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"session:start\" \"session-start.js\" \"minimal,standard,strict\""
+          }
+        ],
+        "description": "Load project context and log session start"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"pre:bash:tmux-safety\" \"tmux-safety.js\" \"standard,strict\""
+          }
+        ],
+        "description": "Block dev server commands outside tmux"
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"pre:secret-detector\" \"secret-detector.js\" \"standard,strict\""
+          }
+        ],
+        "description": "Warn on credential patterns in tool input"
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"pre:observe\" \"observe.js\" \"standard,strict\"",
+            "async": true,
+            "timeout": 10
+          }
+        ],
+        "description": "Log tool usage to telemetry"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"post:quality-gate\" \"quality-gate.js\" \"standard,strict\"",
+            "async": true,
+            "timeout": 15
+          }
+        ],
+        "description": "Auto-format edited files"
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"post:observe\" \"observe.js\" \"standard,strict\"",
+            "async": true,
+            "timeout": 10
+          }
+        ],
+        "description": "Log tool results to telemetry"
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"pre:compact\" \"pre-compact.js\" \"standard,strict\""
+          }
+        ],
+        "description": "Save checkpoint before context compaction"
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"stop:session-end\" \"session-end.js\" \"minimal,standard,strict\"",
+            "async": true,
+            "timeout": 10
+          }
+        ],
+        "description": "Persist session state after each response"
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/scripts/run-with-flags.js \"stop:evaluate-session\" \"evaluate-session.js\" \"standard,strict\"",
+            "async": true,
+            "timeout": 10
+          }
+        ],
+        "description": "Evaluate session for skill effectiveness scoring"
+      }
+    ]
+  }
 }

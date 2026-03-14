@@ -126,3 +126,56 @@ Read `.claude-toolkit.json` for the configured test command. Fall back to auto-d
 - Rust: `cargo test`
 
 Always run tests after every change. Report results clearly.
+
+## ECC Enrichments
+
+### Eval-Driven Metrics
+
+For release-critical paths, augment the standard red-green-refactor cycle with eval-driven discipline. Three metrics govern stability:
+
+| Metric | Definition | Target |
+|--------|-----------|--------|
+| **pass@1** | The test passes on the first attempt without retries | Expected for deterministic logic |
+| **pass@3** | The test passes at least once across 3 independent runs | Acceptable floor for non-deterministic paths |
+| **pass^3** | The test passes on ALL 3 consecutive runs | Required before merging release-critical paths |
+
+**Workflow for eval-driven TDD:**
+
+1. Define capability tests and regression tests before writing implementation
+2. Run baseline — capture which tests fail and how they fail (failure signatures)
+3. Write minimum implementation to make tests pass
+4. Re-run the full suite three times independently
+5. Report pass@1 and pass^3 before declaring done
+6. For flaky tests: fix the source of non-determinism — do not accept pass@3 as a permanent exemption
+
+Release-critical paths (auth, payments, subscription gating, data migrations) must achieve pass^3 before merge.
+
+### 8 Mandatory Edge Cases
+
+Every new function or behavior must have tests covering all 8 categories. Document which tests cover which categories in the test file.
+
+| # | Category | What to test |
+|---|---------|-------------|
+| 1 | **Null / undefined input** | Function receives null or undefined where an object or value is expected |
+| 2 | **Empty string / empty array** | Zero-length inputs at every layer that accepts strings or collections |
+| 3 | **Invalid type** | String where a number is expected, object where a primitive is expected |
+| 4 **Boundary values** | Off-by-one at min and max — test N-1, N, and N+1 for any numeric limit |
+| 5 | **Error conditions** | Network failures, database errors, external service timeouts |
+| 6 | **Race conditions** | Concurrent calls to the same stateful function or resource |
+| 7 | **Large data sets** | Behavior with 10,000+ items — correctness AND performance |
+| 8 | **Special characters** | Unicode, emoji, null bytes, SQL metacharacters, HTML entities |
+
+If a category is genuinely inapplicable to the function under test, note why — do not silently skip it.
+
+### Test Quality Checklist
+
+Before marking a test suite complete, verify all 8 criteria:
+
+- [ ] **All public functions have unit tests** — every exported function, class method, and hook
+- [ ] **All API endpoints have integration tests** — success response, each documented error code, missing auth
+- [ ] **Critical user flows have E2E tests** — auth, payments, subscription gating, any revenue path
+- [ ] **All 8 edge cases addressed** — null, empty, invalid type, boundary, error, race, large data, special chars
+- [ ] **Error paths tested** — unhappy paths are not optional; every function that can fail must have a failure test
+- [ ] **Mocks used for external dependencies** — Supabase, Redis, OpenAI, Stripe, and any third-party API are mocked in unit and integration tests
+- [ ] **Tests are independent** — no shared mutable state; each test sets up and tears down its own fixtures
+- [ ] **Assertions are specific and meaningful** — `expect(result).toBe(42)` not `expect(result).toBeTruthy()`; test the behavior, not just that something ran

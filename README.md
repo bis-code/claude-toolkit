@@ -66,7 +66,9 @@ Scans, triages, and fixes quality issues using parallel subagents with interacti
 | `.claude/agents/*.md` | 10+ | Generic + domain-specific agents (see [Agents](#agents)) |
 | `.claude/rules/common/*.md` | 6 | Universal rules: testing, security, git, coding style, performance, search |
 | `.claude/rules/<lang>/*.md` | varies | Language-specific rules (auto-detected) |
-| `.claude/hooks/hooks.json` | 1 | PreToolUse and PostToolUse hooks |
+| `.claude/hooks/hooks.json` | 1 | Hook event wiring (6 events) |
+| `.claude/hooks/scripts/*.js` | 8 | Auto-telemetry, quality gate, secret detection, tmux safety |
+| `.claude/hooks/scripts/lib/*.js` | 2 | Hook utilities and profile system |
 | `tools/ralph/prd.json.example` | 1 | PRD format reference |
 | `.claude-toolkit.json` | 1 | Project config (test commands, QA categories) |
 | `.mcp.json` | 1 | MCP server config (merged, not overwritten) |
@@ -86,7 +88,7 @@ Agents are specialized subprocesses spawned via the Task tool. They run as isola
 
 | Agent | Role |
 |-------|------|
-| `code-reviewer` | Code quality review — diffs, correctness, coverage gaps |
+| `code-reviewer` | Code quality review — severity tiers, confidence filtering, approval criteria |
 | `security-reviewer` | OWASP-focused vulnerability and auth bypass detection |
 | `architect-reviewer` | Module boundaries, coupling analysis, dependency direction |
 | `performance-reviewer` | N+1 queries, unbounded results, blocking operations |
@@ -96,6 +98,8 @@ Agents are specialized subprocesses spawned via the Task tool. They run as isola
 | `doc-updater` | Documentation maintenance after code changes |
 | `refactor-cleaner` | Dead code removal, duplication consolidation |
 | `incident-debugger` | Structured hypothesis-driven debugging |
+| `database-reviewer` | PostgreSQL query optimization, anti-patterns, index recommendations |
+| `e2e-runner` | Playwright E2E test generation with flaky test management |
 
 ### Domain agents (auto-detected)
 
@@ -121,6 +125,51 @@ Skills are user-facing slash commands defined in `.claude/skills/*/SKILL.md`. Ea
 | docs | `/docs` | Update documentation after changes |
 | refactor-clean | `/refactor-clean` | Dead code and duplication cleanup |
 | incident-debug | `/incident-debug` | Structured debugging workflow |
+| deep-dive | `/deep-dive` | Cross-repo investigation with sub-issue creation |
+
+## V5: Hooks, Dashboard & Workflow Learning
+
+V5 adds invisible automation, a live web dashboard, and continuous learning from your coding patterns.
+
+### Hooks (Automatic, Zero Configuration)
+
+8 Node.js hooks fire automatically on Claude Code events. No manual calls needed.
+
+| Hook | Event | Purpose |
+|------|-------|---------|
+| `session-start.js` | SessionStart | Log session, output project context |
+| `observe.js` | Pre+PostToolUse | Feed every tool call to telemetry |
+| `session-end.js` | Stop | Close session, trigger evolution |
+| `evaluate-session.js` | Stop | Score skill effectiveness |
+| `secret-detector.js` | PreToolUse | Warn on credential patterns (sk-, ghp_, AKIA) |
+| `tmux-safety.js` | PreToolUse(Bash) | Block dev servers outside tmux |
+| `quality-gate.js` | PostToolUse(Edit) | Auto-format (gofmt, ruff, prettier, biome) |
+| `pre-compact.js` | PreCompact | Save checkpoint before compaction |
+
+**Hook profiles** — control which hooks run via `TOOLKIT_HOOK_PROFILE`:
+- `minimal` — session lifecycle only
+- `standard` (default) — + telemetry, quality gate, secret detection
+- `strict` — all hooks enabled
+
+### Live Dashboard
+
+Web dashboard at `localhost:19280` showing real-time session data:
+- Active session with patrol status
+- Live event stream (SSE)
+- Recent sessions history
+- Skill effectiveness scores with "Report Issue" button
+- Learned workflow patterns with confidence scores
+- Patrol alert history
+
+### Workflow Learning
+
+The toolkit learns your coding patterns over time:
+- **Coding patterns** — files edited together, naming preferences
+- **Task execution** — work sequencing, commit frequency
+- **Problem solving** — debug approach, review style
+- **Preferences** — library choices, corrections
+
+Learned patterns are stored in SQLite and distilled to `~/.claude/projects/<project>/memory/workflow_profile.md` for Claude to read in future sessions.
 
 ## Rules Architecture
 

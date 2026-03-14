@@ -408,6 +408,12 @@ func (h *handlers) handleEndSession(_ context.Context, req mcp.CallToolRequest) 
 			resp["learnings"] = insights
 			resp["learnings_count"] = len(insights)
 		}
+
+		// Workflow pattern learning: analyse the completed session's events.
+		workflowPatterns, _ := h.learner.AnalyzeSession(sessionID, sessionProject)
+		if len(workflowPatterns) > 0 {
+			resp["workflow_patterns_detected"] = len(workflowPatterns)
+		}
 	}
 
 	result, _ := json.Marshal(resp)

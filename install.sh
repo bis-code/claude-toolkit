@@ -212,9 +212,9 @@ header "1b" "Go MCP Server"
 if [ -x "$SERVER_BIN" ] && [ "$MODE" != "update" ]; then
   info "Server binary already installed: $SERVER_BIN"
 else
-  install_server_binary
+  install_server_binary || true  # Server is optional — continue without it
 fi
-verify_server_health
+verify_server_health || true
 
 # ─────────────────────────────────────────────
 # Uninstall: remove all toolkit files and exit
@@ -333,37 +333,71 @@ PROJECT_NAME="$(basename "$PROJECT_DIR")"
 PROJECT_TYPE="repository"
 [ "$IS_GIT_REPO" = false ] && PROJECT_TYPE="workspace"
 
-header "2" "Project detection: $PROJECT_DIR"
-if [ "$IS_GIT_REPO" = true ]; then
-  info "Git repository: $PROJECT_NAME"
-else
-  info "Workspace (no git): $PROJECT_NAME"
-  info "Non-git workspace detected"
-fi
+echo ""
+echo -e "  ${BOLD}Scanning project...${NC}"
 
 TECH_STACK=$(detect_tech_stack "$PROJECT_DIR")
-if [ -n "$TECH_STACK" ]; then
-  info "Tech stack: $TECH_STACK"
-else
-  warn "No tech stack detected (will rely on CLAUDE.md)"
-fi
-
-# Detect package manager
 PKG_MANAGER=$(detect_package_manager "$PROJECT_DIR")
-[ -n "$PKG_MANAGER" ] && info "Package manager: $PKG_MANAGER"
 
 # Map stack to language rules
 if [ -n "$LANGUAGES" ]; then
-  # User specified languages via --languages flag (comma to space)
   DETECTED_LANGUAGES="${LANGUAGES//,/ }"
 else
   DETECTED_LANGUAGES=$(map_stack_to_languages "$TECH_STACK")
 fi
-[ -n "$DETECTED_LANGUAGES" ] && info "Language rules: $DETECTED_LANGUAGES"
+
+# Display detected stack as a tree
+echo ""
+if [ "$IS_GIT_REPO" = true ]; then
+  echo -e "    ${GREEN}${BOLD}$PROJECT_NAME${NC} (git repository)"
+else
+  echo -e "    ${GREEN}${BOLD}$PROJECT_NAME${NC} (workspace)"
+fi
+
+# Show detection tree
+_show_detection() {
+  local marker="$1" desc="$2" prefix="$3"
+  echo -e "    ${prefix}${BLUE}${marker}${NC} ${desc}"
+}
+
+STACK_ITEMS=($TECH_STACK)
+TOTAL_STACK_ITEMS=${#STACK_ITEMS[@]}
+STACK_IDX=0
+for item in $TECH_STACK; do
+  STACK_IDX=$((STACK_IDX + 1))
+  TREE_PREFIX="├── "
+  [ $STACK_IDX -eq $TOTAL_STACK_ITEMS ] && [ -z "$PKG_MANAGER" ] && TREE_PREFIX="└── "
+  case "$item" in
+    go)    _show_detection "go.mod" "Go rules + agents" "$TREE_PREFIX" ;;
+    node)  _show_detection "package.json" "Node.js rules" "$TREE_PREFIX" ;;
+    react) _show_detection "React" "TypeScript rules + frontend agents" "$TREE_PREFIX" ;;
+    vue)   _show_detection "Vue" "TypeScript rules + frontend agents" "$TREE_PREFIX" ;;
+    svelte) _show_detection "Svelte" "TypeScript rules + frontend agents" "$TREE_PREFIX" ;;
+    angular) _show_detection "Angular" "TypeScript rules + frontend agents" "$TREE_PREFIX" ;;
+    rust)  _show_detection "Cargo.toml" "Rust rules + agents" "$TREE_PREFIX" ;;
+    python) _show_detection "Python" "Python rules + agents" "$TREE_PREFIX" ;;
+    csharp) _show_detection ".csproj" "C# rules + agents" "$TREE_PREFIX" ;;
+    java)  _show_detection "pom.xml" "Java rules + agents" "$TREE_PREFIX" ;;
+    docker) _show_detection "Dockerfile" "Docker rules" "$TREE_PREFIX" ;;
+    unity) _show_detection "Unity" "C# + Unity agents" "$TREE_PREFIX" ;;
+    solidity) _show_detection "Solidity" "Smart contract rules + agents" "$TREE_PREFIX" ;;
+    make)  _show_detection "Makefile" "Build automation" "$TREE_PREFIX" ;;
+    *)     _show_detection "$item" "Detected" "$TREE_PREFIX" ;;
+  esac
+done
+
+if [ -n "$PKG_MANAGER" ]; then
+  echo -e "    └── ${BLUE}$PKG_MANAGER${NC} Package manager"
+fi
+
+if [ -z "$TECH_STACK" ]; then
+  echo -e "    └── ${YELLOW}No tech stack detected${NC} (will use common rules only)"
+fi
+
+echo ""
 
 if [ -f "$PROJECT_DIR/.mcp.json" ]; then
   EXISTING_MCPS=$(jq -r '.mcpServers | keys | join(", ")' "$PROJECT_DIR/.mcp.json" 2>/dev/null || echo "none")
-  info "Existing .mcp.json: $EXISTING_MCPS"
 fi
 
 if [ -f "$PROJECT_DIR/.claude-toolkit.json" ]; then
@@ -384,67 +418,74 @@ fi
 
 header "3" "MCP Server Configuration"
 
-echo -e "\n    ${BOLD}REQUIRED (always installed):${NC}"
-
-# Install deep-think (mandatory)
-if command -v mcp-deep-think &> /dev/null; then
-  info "deep-think — Structured reasoning (already installed)"
-else
-  echo -e "    ${YELLOW}→${NC} Installing mcp-deep-think..."
-  npm install -g mcp-deep-think 2>/dev/null && info "deep-think installed" || error "Failed to install mcp-deep-think"
-fi
-
-# Determine auto-suggestions
-SUGGEST_PLAYWRIGHT=false
-if [[ "$TECH_STACK" == *react* ]] || [[ "$TECH_STACK" == *vue* ]] || [[ "$TECH_STACK" == *svelte* ]] || [[ "$TECH_STACK" == *node* ]]; then
-  SUGGEST_PLAYWRIGHT=true
-fi
-
+# Auto-detect and install MCPs with prerequisite checking
 INSTALL_PLAYWRIGHT=false
 INSTALL_LEANN=false
 INSTALL_CONTEXT7=false
+INSTALLED_MCP_LIST=""
 
-if [ "$SUGGEST_PLAYWRIGHT" = true ]; then
-  INSTALL_PLAYWRIGHT=true
+# Check prerequisites before deciding what to install
+_check_mcp_prereq() {
+  local server="$1"
+  case "$server" in
+    deep-think)
+      if command -v mcp-deep-think &>/dev/null; then
+        return 0
+      elif command -v npm &>/dev/null; then
+        npm install -g mcp-deep-think 2>/dev/null && return 0
+      fi
+      return 1
+      ;;
+    playwright)
+      command -v npx &>/dev/null && return 0
+      return 1
+      ;;
+    leann-server)
+      command -v leann_mcp &>/dev/null && return 0
+      return 1
+      ;;
+    context7)
+      command -v npx &>/dev/null && return 0
+      return 1
+      ;;
+  esac
+  return 1
+}
+
+# deep-think is mandatory
+if _check_mcp_prereq "deep-think"; then
+  echo -e "    ${GREEN}✓${NC} deep-think — Structured reasoning"
+  INSTALLED_MCP_LIST="deep-think"
+else
+  echo -e "    ${YELLOW}⚠${NC} deep-think — Skipped (npm not available)"
 fi
 
-# Auto mode or update: install all / skip interactive selection
-if [ "$AUTO_MODE" = true ]; then
-  INSTALL_PLAYWRIGHT=$SUGGEST_PLAYWRIGHT
+# Auto-detect optional MCPs based on tech stack + available tools
+if [[ "$TECH_STACK" == *react* ]] || [[ "$TECH_STACK" == *vue* ]] || [[ "$TECH_STACK" == *svelte* ]] || [[ "$TECH_STACK" == *angular* ]] || [[ "$TECH_STACK" == *node* ]]; then
+  if _check_mcp_prereq "playwright"; then
+    INSTALL_PLAYWRIGHT=true
+    echo -e "    ${GREEN}✓${NC} playwright — Browser testing (frontend detected)"
+    INSTALLED_MCP_LIST="$INSTALLED_MCP_LIST, playwright"
+  else
+    echo -e "    ${YELLOW}⚠${NC} playwright — Skipped (npx not available)"
+  fi
+fi
+
+if _check_mcp_prereq "leann-server"; then
   INSTALL_LEANN=true
+  echo -e "    ${GREEN}✓${NC} leann-server — Semantic code search"
+  INSTALLED_MCP_LIST="$INSTALLED_MCP_LIST, leann-server"
+fi
+
+if _check_mcp_prereq "context7"; then
   INSTALL_CONTEXT7=true
-elif [ "$MODE" = "update" ]; then
-  # On update: skip interactive selection, keep existing MCP config.
-  # install_mcp_config merges without overwriting, so existing servers are preserved.
-  info "Update mode — keeping existing MCP server selection"
-else
-  # Interactive selection
-  echo -e "\n    ${BOLD}OPTIONAL (toggle with number, Enter to confirm):${NC}"
+  echo -e "    ${GREEN}✓${NC} context7 — Library documentation lookup"
+  INSTALLED_MCP_LIST="$INSTALLED_MCP_LIST, context7"
+fi
 
-  while true; do
-    PW_MARK=" "; [ "$INSTALL_PLAYWRIGHT" = true ] && PW_MARK="x"
-    LE_MARK=" "; [ "$INSTALL_LEANN" = true ] && LE_MARK="x"
-    C7_MARK=" "; [ "$INSTALL_CONTEXT7" = true ] && C7_MARK="x"
-
-    PW_NOTE=""; [ "$SUGGEST_PLAYWRIGHT" = true ] && PW_NOTE=" (suggested: UI project detected)"
-    LE_NOTE=""
-    command -v leann_mcp &> /dev/null && LE_NOTE=" (binary found)"
-
-    echo ""
-    echo -e "    [${PW_MARK}] 1. playwright     Browser testing & UI verification${PW_NOTE}"
-    echo -e "    [${LE_MARK}] 2. leann-server   Semantic code search${LE_NOTE}"
-    echo -e "    [${C7_MARK}] 3. context7       Live library documentation lookup"
-    echo ""
-    read -r -p "    Toggle [1-3], Enter to confirm: " choice
-
-    case "$choice" in
-      1) [ "$INSTALL_PLAYWRIGHT" = true ] && INSTALL_PLAYWRIGHT=false || INSTALL_PLAYWRIGHT=true ;;
-      2) [ "$INSTALL_LEANN" = true ] && INSTALL_LEANN=false || INSTALL_LEANN=true ;;
-      3) [ "$INSTALL_CONTEXT7" = true ] && INSTALL_CONTEXT7=false || INSTALL_CONTEXT7=true ;;
-      "") break ;;
-      *) echo "    Invalid choice" ;;
-    esac
-  done
+# On update, keep existing selection
+if [ "$MODE" = "update" ]; then
+  echo -e "    ${BLUE}→${NC} Update mode — preserving existing MCP configuration"
 fi
 
 # ─────────────────────────────────────────────
@@ -803,29 +844,43 @@ install_commands "$TOOLKIT_DIR"
 # ─────────────────────────────────────────────
 
 echo ""
-echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
 if [ "$MODE" = "update" ]; then
-  echo -e "${GREEN}${BOLD}Done!${NC} Toolkit v$TOOLKIT_VERSION updated."
+  echo -e "  ${GREEN}${BOLD}Claude Toolkit v$TOOLKIT_VERSION updated!${NC}"
 else
-  echo -e "${GREEN}${BOLD}Done!${NC} Toolkit v$TOOLKIT_VERSION installed."
+  echo -e "  ${GREEN}${BOLD}Claude Toolkit v$TOOLKIT_VERSION installed!${NC}"
 fi
 echo ""
-echo "  Installed:"
-[ "$SKIP_RULES" = false ]  && echo "    Rules:    common + ${DETECTED_LANGUAGES:-none}"
-[ "$SKIP_SKILLS" = false ] && echo "    Skills:   ${SKILL_COUNT:-0} skills"
-[ "$SKIP_HOOKS" = false ]  && echo "    Hooks:    PreToolUse, PostToolUse"
-[ "$SKIP_AGENTS" = false ] && echo "    Agents:   ${TOTAL_AGENT_COUNT:-0} (${GENERIC_COUNT:-0} generic + ${DOMAIN_AGENT_COUNT:-0} domain)"
-echo "    Commands: $(ls "$TOOLKIT_DIR/commands/"*.md 2>/dev/null | wc -l | tr -d ' ') slash commands"
-echo "    MCP:      $INSTALLED_MCPS"
-[ -x "$SERVER_BIN" ] && echo "    Server:   claude-toolkit-server (V4)"
-[ "$READ_ONLY" = true ] && echo "    Mode:     read-only"
+
+# Count installed components
+RULE_COUNT=$(find "$PROJECT_DIR/.claude/rules" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+HOOK_COUNT=$(find "$PROJECT_DIR/.claude/hooks/scripts" -name "*.js" -not -path "*/lib/*" 2>/dev/null | wc -l | tr -d ' ')
+CMD_COUNT=$(ls "$TOOLKIT_DIR/commands/"*.md 2>/dev/null | wc -l | tr -d ' ')
+
+[ "$SKIP_RULES" = false ]  && echo -e "    ${GREEN}✓${NC} ${RULE_COUNT} rules (common + ${DETECTED_LANGUAGES:-none})"
+[ "$SKIP_SKILLS" = false ] && echo -e "    ${GREEN}✓${NC} ${SKILL_COUNT:-0} skills (/ralph, /qa, /plan, /code-review, ...)"
+[ "$SKIP_AGENTS" = false ] && echo -e "    ${GREEN}✓${NC} ${TOTAL_AGENT_COUNT:-0} agents (${GENERIC_COUNT:-0} generic + ${DOMAIN_AGENT_COUNT:-0} domain)"
+[ "$SKIP_HOOKS" = false ]  && echo -e "    ${GREEN}✓${NC} ${HOOK_COUNT} hooks (auto-telemetry, quality gate, secret detection)"
+echo -e "    ${GREEN}✓${NC} ${CMD_COUNT} slash commands"
+echo -e "    ${GREEN}✓${NC} MCP: ${INSTALLED_MCP_LIST:-none}"
+[ -x "$SERVER_BIN" ] && echo -e "    ${GREEN}✓${NC} MCP server → Dashboard at ${BLUE}localhost:19280${NC}"
+[ "$READ_ONLY" = true ] && echo -e "    ${YELLOW}!${NC} Read-only mode"
 echo ""
-echo "  Next steps:"
-echo "    1. Start Claude Code in this project"
-echo "    2. Run /ralph --issues 1,2 to build features from GitHub issues"
-echo "    3. Run /qa to scan and fix quality issues"
-echo "    4. Run /verify to check test + lint status"
+
+echo -e "  ${BOLD}Your sessions will automatically:${NC}"
+echo -e "    ${BLUE}•${NC} Track tool usage and patterns (invisible)"
+echo -e "    ${BLUE}•${NC} Detect when you're stuck (patrol)"
+echo -e "    ${BLUE}•${NC} Score skill effectiveness (auto-eval)"
+echo -e "    ${BLUE}•${NC} Learn your coding preferences over time"
 echo ""
-echo "  Update toolkit:  $TOOLKIT_DIR/install.sh --update"
-echo "  Uninstall:       $TOOLKIT_DIR/install.sh --uninstall"
+
+echo -e "  ${BOLD}Quick start:${NC}"
+echo "    /ralph --issues 1,2    Build features from GitHub issues"
+echo "    /qa                    Scan and fix quality issues"
+echo "    /plan                  Plan implementation approach"
+echo "    /code-review           Review recent changes"
+echo ""
+echo -e "  Update:    ${BLUE}$TOOLKIT_DIR/install.sh --update${NC}"
+echo -e "  Uninstall: ${BLUE}$TOOLKIT_DIR/install.sh --uninstall${NC}"
 echo ""

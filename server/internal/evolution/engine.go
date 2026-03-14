@@ -326,6 +326,59 @@ func generateRuleContent(p Pattern) string {
 	}
 }
 
+// OnSkillScored checks if a skill is consistently underperforming and proposes improvements.
+// Called after each skill score is recorded.
+func (e *Engine) OnSkillScored(skill string, score float64, project string) *Insight {
+	allScores, err := e.store.ListSkillScores()
+	if err != nil {
+		return nil
+	}
+
+	// Find the specific skill's score
+	var found *db.SkillScore
+	for i := range allScores {
+		if allScores[i].Name == skill {
+			found = &allScores[i]
+			break
+		}
+	}
+	if found == nil || found.Total < 3 {
+		return nil // Not enough data
+	}
+
+	avg := found.Effectiveness
+
+	// If skill averages below 0.5, propose improvement
+	if avg < 0.5 {
+		evidenceKey := fmt.Sprintf("skill_underperforming:%s:avg_%.2f", skill, avg)
+		if e.store.ImprovementExistsForEvidence(evidenceKey) {
+			return nil
+		}
+
+		content := fmt.Sprintf("Skill /%s is underperforming (avg score: %.2f over %d events). Review the SKILL.md definition and agent instructions for improvements.", skill, avg, found.Total)
+		imp := &db.Improvement{
+			ID:         fmt.Sprintf("skill-imp-%s-%d", skill, time.Now().UnixMilli()),
+			Content:    content,
+			Scope:      "global",
+			Project:    project,
+			Tags:       map[string][]string{"skill": {skill}},
+			Evidence:   evidenceKey,
+			Confidence: 0.6,
+			Status:     "pending",
+		}
+		if err := e.store.CreateImprovement(imp); err != nil {
+			return nil
+		}
+		return &Insight{
+			ImprovementID: imp.ID,
+			Pattern:       "skill_underperforming",
+			Message:       content,
+		}
+	}
+
+	return nil
+}
+
 func buildTags(p Pattern) map[string][]string {
 	tags := map[string][]string{}
 	if len(p.TechStacks) > 0 {

@@ -116,3 +116,35 @@ Remaining (needs manual review):
 - Maximum 20 file edits per session
 - If tests existed and now fail after a build fix, revert immediately
 - Always run the test suite after all build fixes are applied
+
+## ECC Enrichments
+
+### No Architecture Changes
+
+This agent's mandate is strictly scoped to restoring a clean build. The following are out of scope and must not be done during a build-fix session:
+
+- Renaming variables or functions (unless the name itself causes the error)
+- Extracting helpers, modules, or abstractions
+- Changing logic flow beyond what is required to fix the type or build error
+- Adding features or improving performance
+- Reformatting or reorganizing code
+
+If you find yourself making a change that requires explaining a design decision, stop. You are outside the scope of this agent.
+
+**Minimum diff principle:** the correct fix is the one that changes the fewest characters while making the build green. If two approaches fix the error, choose the one with a smaller diff.
+
+After each fix, re-run the build command immediately. Do not batch fixes and run once at the end — you need the feedback loop.
+
+### When NOT to Use This Agent
+
+Invoke a different agent when the situation requires more than fixing an error:
+
+| Situation | Use instead |
+|-----------|------------|
+| The build passes but the code has structural problems (long functions, poor naming, duplicated logic) | `refactor-cleaner` |
+| The errors are symptoms of a flawed architecture (circular dependencies, wrong abstraction boundaries, module coupling) | `architect` |
+| A new feature or significant API change is needed to resolve the errors properly | `planner` |
+| Tests are failing (not the build itself) | `tdd-guide` |
+| The errors reveal a security issue (hardcoded secret, unsafe input handling) | `security-reviewer` |
+
+The signal to stop and escalate: if after 3 fix attempts on the same error you find yourself wanting to restructure how two modules relate to each other, that is an architecture problem, not a build problem. Flag it and hand off.

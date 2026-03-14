@@ -1,0 +1,25 @@
+FROM alpine:3.19
+
+RUN apk add --no-cache \
+        bash \
+        git \
+        jq \
+        curl \
+        nodejs \
+        npm
+
+# Mock claude CLI so install.sh does not block waiting for a real binary
+RUN printf '#!/bin/bash\necho "claude mock"\n' > /usr/local/bin/claude && \
+    chmod +x /usr/local/bin/claude
+
+COPY . /toolkit
+
+WORKDIR /test-project
+
+RUN git init && \
+    git config user.email "test@test.com" && \
+    git config user.name "Test"
+
+RUN printf 'module test\ngo 1.21\n' > go.mod
+
+ENTRYPOINT ["bash", "/toolkit/docker/test-entrypoint.sh"]

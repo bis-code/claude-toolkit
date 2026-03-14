@@ -11,6 +11,7 @@ import (
 	"github.com/bis-code/claude-toolkit/server/internal/evolution"
 	"github.com/bis-code/claude-toolkit/server/internal/patrol"
 	"github.com/bis-code/claude-toolkit/server/internal/rules"
+	"github.com/bis-code/claude-toolkit/server/internal/workflow"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -26,6 +27,7 @@ type handlers struct {
 	engine        *rules.Engine
 	detector      *patrol.Detector
 	evEngine      *evolution.Engine
+	learner       *workflow.Learner
 	dashboardAddr string
 }
 
@@ -53,6 +55,7 @@ func NewServer(opts ...Option) *server.MCPServer {
 		engine:        rules.NewEngine(store),
 		detector:      patrol.NewDetector(patrol.DefaultThresholds()),
 		evEngine:      evolution.NewEngine(store),
+		learner:       workflow.NewLearner(store),
 		dashboardAddr: cfg.dashboardAddr,
 	}
 
@@ -223,6 +226,8 @@ func (h *handlers) registerTools(s *server.MCPServer) {
 	h.registerPatrolTools(s)
 	h.registerEvolutionTools(s)
 	h.registerWorkspaceTools(s)
+	h.registerWorkflowTools(s)
+	h.registerEvaluatorTools(s)
 }
 
 func (h *handlers) handleHealthCheck(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {

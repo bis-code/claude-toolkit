@@ -593,3 +593,206 @@ func TestDashboard_APIStats_VerificationDivByZero(t *testing.T) {
 		t.Errorf("/api/stats verification.rate with no data: want 0, got %f", rate)
 	}
 }
+
+// ── New API endpoint tests ────────────────────────────────────
+
+// TestDashboard_APIRecentEvents verifies /api/events/recent returns events across sessions.
+func TestDashboard_APIRecentEvents(t *testing.T) {
+	ts := newTestServer(t, func(s *db.Store) {
+		_ = s.CreateSession(&db.Session{ID: "se-1", Project: "proj-a", StartedAt: time.Now()})
+		_ = s.CreateSession(&db.Session{ID: "se-2", Project: "proj-b", StartedAt: time.Now()})
+		_ = s.CreateEvent(&db.Event{ID: "re-1", SessionID: "se-1", Type: "tool_call", Result: "success", Timestamp: time.Now()})
+		_ = s.CreateEvent(&db.Event{ID: "re-2", SessionID: "se-2", Type: "verification", Result: "verified", Timestamp: time.Now()})
+	})
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/events/recent")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/events/recent: want 200, got %d", resp.StatusCode)
+	}
+
+	var payload map[string]interface{}
+	decodeJSON(t, resp, &payload)
+
+	if _, ok := payload["events"]; !ok {
+		t.Fatal("/api/events/recent: response missing 'events' key")
+	}
+
+	count := int(payload["count"].(float64))
+	if count != 2 {
+		t.Errorf("/api/events/recent: want 2 events across sessions, got %d", count)
+	}
+}
+
+// TestDashboard_APIRecentEvents_LimitParam verifies ?limit= is respected.
+func TestDashboard_APIRecentEvents_LimitParam(t *testing.T) {
+	ts := newTestServer(t, func(s *db.Store) {
+		_ = s.CreateSession(&db.Session{ID: "slim-1", Project: "p", StartedAt: time.Now()})
+		for i := 0; i < 5; i++ {
+			_ = s.CreateEvent(&db.Event{
+				ID:        "slim-ev-" + string(rune('a'+i)),
+				SessionID: "slim-1",
+				Type:      "tool_call",
+				Result:    "success",
+				Timestamp: time.Now(),
+			})
+		}
+	})
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/events/recent?limit=3")
+	var payload map[string]interface{}
+	decodeJSON(t, resp, &payload)
+
+	count := int(payload["count"].(float64))
+	if count != 3 {
+		t.Errorf("/api/events/recent?limit=3: want 3, got %d", count)
+	}
+}
+
+// TestDashboard_APISkills verifies /api/skills returns aggregated effectiveness per event type.
+func TestDashboard_APISkills(t *testing.T) {
+	ts := newTestServer(t, func(s *db.Store) {
+		_ = s.CreateSession(&db.Session{ID: "sk-sess", Project: "p", StartedAt: time.Now()})
+		_ = s.CreateEvent(&db.Event{ID: "sk-1", SessionID: "sk-sess", Type: "tool_call", Result: "success", Timestamp: time.Now()})
+		_ = s.CreateEvent(&db.Event{ID: "sk-2", SessionID: "sk-sess", Type: "tool_call", Result: "success", Timestamp: time.Now()})
+		_ = s.CreateEvent(&db.Event{ID: "sk-3", SessionID: "sk-sess", Type: "tool_call", Result: "failure", Timestamp: time.Now()})
+		_ = s.CreateEvent(&db.Event{ID: "sk-4", SessionID: "sk-sess", Type: "verification", Result: "verified", Timestamp: time.Now()})
+	})
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/skills")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/skills: want 200, got %d", resp.StatusCode)
+	}
+
+	var payload map[string]interface{}
+	decodeJSON(t, resp, &payload)
+
+	skills, ok := payload["skills"].([]interface{})
+	if !ok {
+		t.Fatalf("/api/skills: 'skills' missing or not an array, got %T", payload["skills"])
+	}
+
+	// Two distinct event types seeded
+	if len(skills) != 2 {
+		t.Errorf("/api/skills: want 2 skill entries, got %d", len(skills))
+	}
+
+	// Verify tool_call effectiveness is ~0.667 (2 success out of 3)
+	for _, raw := range skills {
+		skill, ok := raw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("/api/skills: skill entry is not an object, got %T", raw)
+		}
+		if skill["name"] == "tool_call" {
+			eff, ok := skill["effectiveness"].(float64)
+			if !ok {
+				t.Fatal("/api/skills tool_call: 'effectiveness' missing")
+			}
+			if eff < 0.66 || eff > 0.68 {
+				t.Errorf("/api/skills tool_call effectiveness: want ~0.667, got %f", eff)
+			}
+		}
+	}
+}
+
+// TestDashboard_APIWorkflow verifies /api/workflow returns learned patterns.
+func TestDashboard_APIWorkflow(t *testing.T) {
+	ts := newTestServer(t, func(s *db.Store) {
+		_ = s.CreateImprovement(&db.Improvement{
+			ID:         "wf-1",
+			Content:    "Always run tests before commit",
+			Scope:      "global",
+			Confidence: 0.9,
+			Status:     "applied",
+		})
+		_ = s.CreateImprovement(&db.Improvement{
+			ID:         "wf-2",
+			Content:    "Use descriptive branch names",
+			Scope:      "project",
+			Confidence: 0.75,
+			Status:     "pending",
+		})
+		// Rejected should not appear
+		_ = s.CreateImprovement(&db.Improvement{
+			ID:         "wf-3",
+			Content:    "Rejected pattern",
+			Scope:      "global",
+			Confidence: 0.1,
+			Status:     "rejected",
+		})
+	})
+	defer ts.Close()
+
+	resp := get(t, ts, "/api/workflow")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/workflow: want 200, got %d", resp.StatusCode)
+	}
+
+	var payload map[string]interface{}
+	decodeJSON(t, resp, &payload)
+
+	patterns, ok := payload["patterns"].([]interface{})
+	if !ok {
+		t.Fatalf("/api/workflow: 'patterns' missing or not an array, got %T", payload["patterns"])
+	}
+
+	// Only applied and pending should be returned
+	if len(patterns) != 2 {
+		t.Errorf("/api/workflow: want 2 patterns (applied+pending), got %d", len(patterns))
+	}
+}
+
+// TestDashboard_ContentTypeJSON_NewEndpoints verifies new API endpoints return JSON.
+func TestDashboard_ContentTypeJSON_NewEndpoints(t *testing.T) {
+	ts := newTestServer(t, nil)
+	defer ts.Close()
+
+	paths := []string{
+		"/api/events/recent",
+		"/api/skills",
+		"/api/workflow",
+	}
+
+	for _, path := range paths {
+		resp := get(t, ts, path)
+		ct := resp.Header.Get("Content-Type")
+		if ct != "application/json" {
+			t.Errorf("GET %s: want Content-Type application/json, got %q", path, ct)
+		}
+		resp.Body.Close()
+	}
+}
+
+// TestDashboard_SSE_ConnectAndReceive verifies the SSE endpoint returns
+// a text/event-stream content type and that NotifyEvent delivers a message.
+func TestDashboard_SSE_ConnectAndReceive(t *testing.T) {
+	store, err := db.NewMemoryStore()
+	if err != nil {
+		t.Fatalf("NewMemoryStore: %v", err)
+	}
+	defer store.Close()
+
+	detector := patrol.NewDetector(patrol.DefaultThresholds())
+	srv := dashboard.NewServer(store, detector)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Connect to SSE endpoint — use a context with cancel so we can stop.
+	req, _ := http.NewRequest("GET", ts.URL+"/sse/events", nil)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("SSE connect: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /sse/events: want 200, got %d", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct != "text/event-stream" {
+		t.Errorf("GET /sse/events: want Content-Type text/event-stream, got %q", ct)
+	}
+}

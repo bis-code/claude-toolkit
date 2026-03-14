@@ -1580,3 +1580,247 @@ func TestIntegration_GetProjectStats_IncludesVerification(t *testing.T) {
 	}
 	_ = verificationRate
 }
+
+// ---- Workflow Pattern Tests ----
+
+func TestRecordWorkflowPattern_NewPattern(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result := callTool(t, c, "toolkit__record_workflow_pattern", map[string]interface{}{
+		"category": "coding_pattern",
+		"pattern":  "always use context as first param",
+		"project":  "my-go-project",
+		"details":  "Go best practice",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "workflow pattern recorded" {
+		t.Errorf("unexpected message: %v", resp["message"])
+	}
+	if resp["updated"] != false {
+		t.Error("new pattern should have updated=false")
+	}
+	if resp["occurrences"].(float64) != 1 {
+		t.Errorf("occurrences = %v, want 1", resp["occurrences"])
+	}
+	if resp["confidence"].(float64) != 0.5 {
+		t.Errorf("confidence = %v, want 0.5 for new pattern", resp["confidence"])
+	}
+}
+
+func TestRecordWorkflowPattern_ExistingPattern(t *testing.T) {
+	c, _ := setupClient(t)
+
+	args := map[string]interface{}{
+		"category": "task_execution",
+		"pattern":  "run tests before committing",
+		"project":  "my-project",
+	}
+
+	// Record the same pattern multiple times to trigger an update
+	callTool(t, c, "toolkit__record_workflow_pattern", args)
+	result := callTool(t, c, "toolkit__record_workflow_pattern", args)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["updated"] != true {
+		t.Error("second record should have updated=true")
+	}
+	if resp["occurrences"].(float64) != 2 {
+		t.Errorf("occurrences = %v, want 2", resp["occurrences"])
+	}
+}
+
+func TestGetWorkflowProfile(t *testing.T) {
+	c, _ := setupClient(t)
+
+	// Seed a couple of patterns
+	callTool(t, c, "toolkit__record_workflow_pattern", map[string]interface{}{
+		"category": "coding_pattern",
+		"pattern":  "write tests first",
+		"project":  "proj-a",
+	})
+	callTool(t, c, "toolkit__record_workflow_pattern", map[string]interface{}{
+		"category": "preference",
+		"pattern":  "prefer explicit error handling",
+		"project":  "proj-a",
+	})
+
+	result := callTool(t, c, "toolkit__get_workflow_profile", map[string]interface{}{
+		"project": "proj-a",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	count, ok := resp["count"].(float64)
+	if !ok {
+		t.Fatal("count field missing from response")
+	}
+	if int(count) < 1 {
+		t.Errorf("expected at least 1 category, got %v", count)
+	}
+}
+
+func TestCreateWorkflowEvent(t *testing.T) {
+	_, store := setupClient(t)
+
+	we := &db.WorkflowEvent{
+		ID:          "we-test-001",
+		SessionID:   "sess-001",
+		Category:    "problem_solving",
+		Pattern:     "break down the problem first",
+		Details:     "observed across sessions",
+		Confidence:  0.7,
+		Occurrences: 3,
+		Project:     "test-project",
+	}
+	if err := store.CreateWorkflowEvent(we); err != nil {
+		t.Fatalf("CreateWorkflowEvent failed: %v", err)
+	}
+
+	events, err := store.ListWorkflowEvents("test-project")
+	if err != nil {
+		t.Fatalf("ListWorkflowEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Pattern != we.Pattern {
+		t.Errorf("pattern = %q, want %q", events[0].Pattern, we.Pattern)
+	}
+	if events[0].Category != we.Category {
+		t.Errorf("category = %q, want %q", events[0].Category, we.Category)
+	}
+}
+
+// ---- Skill Score Tests ----
+
+func TestScoreSkill(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result := callTool(t, c, "toolkit__score_skill", map[string]interface{}{
+		"skill":      "test_writing",
+		"score":      float64(0.85),
+		"session_id": "sess-skill-001",
+		"project":    "proj-x",
+		"details":    "wrote comprehensive tests",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if resp["message"] != "skill score recorded" {
+		t.Errorf("unexpected message: %v", resp["message"])
+	}
+	if resp["skill"] != "test_writing" {
+		t.Errorf("skill = %v, want test_writing", resp["skill"])
+	}
+	if resp["score"].(float64) != 0.85 {
+		t.Errorf("score = %v, want 0.85", resp["score"])
+	}
+}
+
+func TestScoreSkill_InvalidScore(t *testing.T) {
+	c, _ := setupClient(t)
+
+	result := callTool(t, c, "toolkit__score_skill", map[string]interface{}{
+		"skill": "code_review",
+		"score": float64(1.5), // invalid: > 1.0
+	})
+
+	// Should return a tool error (IsError=true), but callTool will still return text
+	if result == "" {
+		t.Fatal("expected non-empty result for invalid score")
+	}
+	// The result should contain an error indication
+	if !containsError(result) {
+		t.Errorf("expected error response for score > 1.0, got: %s", result)
+	}
+}
+
+func TestGetSkillStats(t *testing.T) {
+	c, _ := setupClient(t)
+
+	// Record a few scores for the same skill
+	callTool(t, c, "toolkit__score_skill", map[string]interface{}{
+		"skill":   "refactoring",
+		"score":   float64(0.9),
+		"project": "proj-y",
+	})
+	callTool(t, c, "toolkit__score_skill", map[string]interface{}{
+		"skill":   "refactoring",
+		"score":   float64(0.7),
+		"project": "proj-y",
+	})
+	callTool(t, c, "toolkit__score_skill", map[string]interface{}{
+		"skill":   "debugging",
+		"score":   float64(0.6),
+		"project": "proj-y",
+	})
+
+	// Get stats for all skills in proj-y
+	result := callTool(t, c, "toolkit__get_skill_stats", map[string]interface{}{
+		"project": "proj-y",
+	})
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	count, ok := resp["count"].(float64)
+	if !ok {
+		t.Fatal("count field missing from response")
+	}
+	if int(count) < 2 {
+		t.Errorf("expected at least 2 skills, got %v", count)
+	}
+
+	// Get stats for a single skill
+	result = callTool(t, c, "toolkit__get_skill_stats", map[string]interface{}{
+		"skill":   "refactoring",
+		"project": "proj-y",
+	})
+
+	var singleResp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &singleResp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	stats, ok := singleResp["stats"].([]interface{})
+	if !ok || len(stats) == 0 {
+		t.Fatal("expected stats array with entries for refactoring")
+	}
+	statEntry, ok := stats[0].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected stats entry to be an object")
+	}
+	// avg of 0.9 and 0.7 = 0.8
+	avgScore, ok := statEntry["avg_score"].(float64)
+	if !ok {
+		t.Fatal("avg_score missing from stat entry")
+	}
+	if avgScore < 0.79 || avgScore > 0.81 {
+		t.Errorf("avg_score = %v, want ~0.8", avgScore)
+	}
+}
+
+// containsError checks if a tool result JSON indicates an error condition.
+func containsError(result string) bool {
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &m); err != nil {
+		// If it's not JSON, treat non-JSON error strings as errors
+		return true
+	}
+	// Check common error patterns
+	if _, hasError := m["error"]; hasError {
+		return true
+	}
+	return false
+}

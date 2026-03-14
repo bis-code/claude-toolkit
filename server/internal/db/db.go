@@ -87,12 +87,39 @@ CREATE TABLE IF NOT EXISTS improvements (
 );
 CREATE INDEX IF NOT EXISTS idx_improvements_status ON improvements(status);
 
+CREATE TABLE IF NOT EXISTS workflow_events (
+	id TEXT PRIMARY KEY,
+	session_id TEXT NOT NULL,
+	category TEXT NOT NULL CHECK(category IN ('coding_pattern','task_execution','problem_solving','preference')),
+	pattern TEXT NOT NULL,
+	details TEXT DEFAULT '',
+	confidence REAL DEFAULT 0.5,
+	occurrences INTEGER DEFAULT 1,
+	first_seen TEXT NOT NULL,
+	last_seen TEXT NOT NULL,
+	project TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_category ON workflow_events(category);
+CREATE INDEX IF NOT EXISTS idx_workflow_pattern ON workflow_events(pattern);
+CREATE INDEX IF NOT EXISTS idx_workflow_confidence ON workflow_events(confidence);
+
+CREATE TABLE IF NOT EXISTS skill_scores (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	skill TEXT NOT NULL,
+	score REAL NOT NULL,
+	session_id TEXT DEFAULT '',
+	project TEXT DEFAULT '',
+	details TEXT DEFAULT '',
+	scored_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skill_scores_skill ON skill_scores(skill);
+
 CREATE TABLE IF NOT EXISTS schema_version (
 	version INTEGER PRIMARY KEY
 );
 `
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 // Store provides database operations for the toolkit.
 type Store struct {
@@ -273,6 +300,40 @@ ALTER TABLE sessions ADD COLUMN tasks_verified INTEGER DEFAULT 0;
 UPDATE schema_version SET version = 4;`
 		if _, err := db.Exec(migration); err != nil {
 			return fmt.Errorf("migration v4 failed: %w", err)
+		}
+	}
+
+	// Migration v5: Add workflow_events and skill_scores tables
+	if version < 5 {
+		migration := `
+CREATE TABLE IF NOT EXISTS workflow_events (
+	id TEXT PRIMARY KEY,
+	session_id TEXT NOT NULL,
+	category TEXT NOT NULL CHECK(category IN ('coding_pattern','task_execution','problem_solving','preference')),
+	pattern TEXT NOT NULL,
+	details TEXT DEFAULT '',
+	confidence REAL DEFAULT 0.5,
+	occurrences INTEGER DEFAULT 1,
+	first_seen TEXT NOT NULL,
+	last_seen TEXT NOT NULL,
+	project TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_category ON workflow_events(category);
+CREATE INDEX IF NOT EXISTS idx_workflow_pattern ON workflow_events(pattern);
+CREATE INDEX IF NOT EXISTS idx_workflow_confidence ON workflow_events(confidence);
+CREATE TABLE IF NOT EXISTS skill_scores (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	skill TEXT NOT NULL,
+	score REAL NOT NULL,
+	session_id TEXT DEFAULT '',
+	project TEXT DEFAULT '',
+	details TEXT DEFAULT '',
+	scored_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skill_scores_skill ON skill_scores(skill);
+UPDATE schema_version SET version = 5;`
+		if _, err := db.Exec(migration); err != nil {
+			return fmt.Errorf("migration v5 failed: %w", err)
 		}
 	}
 
@@ -844,4 +905,375 @@ func (s *Store) ImprovementExistsForEvidence(evidence string) bool {
 		evidence,
 	).Scan(&count)
 	return err == nil && count > 0
+}
+
+// ListRecentEvents returns the most recent events across all sessions,
+// ordered by timestamp DESC. Used by the dashboard live-events panel.
+func (s *Store) ListRecentEvents(limit int) ([]*Event, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`
+		SELECT id, session_id, type, result, details, context, timestamp
+		FROM events
+		ORDER BY timestamp DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []*Event
+	for rows.Next() {
+		e := &Event{}
+		var ts string
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.Type, &e.Result, &e.Details, &e.Context, &ts); err != nil {
+			return nil, err
+		}
+		e.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+// SkillScore holds the aggregated effectiveness metrics for a skill (event type).
+type SkillScore struct {
+	Name        string  `json:"name"`
+	Total       int     `json:"total"`
+	Successes   int     `json:"successes"`
+	Failures    int     `json:"failures"`
+	Effectiveness float64 `json:"effectiveness"`
+}
+
+// ListSkillScores returns effectiveness scores aggregated per event type.
+func (s *Store) ListSkillScores() ([]SkillScore, error) {
+	rows, err := s.db.Query(`
+		SELECT
+			type,
+			COUNT(*) AS total,
+			SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END) AS successes,
+			SUM(CASE WHEN result = 'failure' THEN 1 ELSE 0 END) AS failures
+		FROM events
+		GROUP BY type
+		ORDER BY total DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var scores []SkillScore
+	for rows.Next() {
+		var ss SkillScore
+		if err := rows.Scan(&ss.Name, &ss.Total, &ss.Successes, &ss.Failures); err != nil {
+			return nil, err
+		}
+		if ss.Total > 0 {
+			ss.Effectiveness = float64(ss.Successes) / float64(ss.Total)
+		}
+		scores = append(scores, ss)
+	}
+	return scores, rows.Err()
+}
+
+// WorkflowPattern holds a learned workflow pattern (improvement with confidence).
+type WorkflowPattern struct {
+	Content    string  `json:"content"`
+	Scope      string  `json:"scope"`
+	Confidence float64 `json:"confidence"`
+	Evidence   string  `json:"evidence,omitempty"`
+}
+
+// ListWorkflowPatterns returns applied improvements as learned workflow patterns.
+func (s *Store) ListWorkflowPatterns(limit int) ([]WorkflowPattern, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(`
+		SELECT content, scope, confidence, evidence
+		FROM improvements
+		WHERE status IN ('applied', 'pending')
+		ORDER BY confidence DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var patterns []WorkflowPattern
+	for rows.Next() {
+		var p WorkflowPattern
+		if err := rows.Scan(&p.Content, &p.Scope, &p.Confidence, &p.Evidence); err != nil {
+			return nil, err
+		}
+		patterns = append(patterns, p)
+	}
+	return patterns, rows.Err()
+}
+
+// WorkflowEvent represents a learned workflow pattern stored in workflow_events.
+type WorkflowEvent struct {
+	ID          string    `json:"id"`
+	SessionID   string    `json:"session_id"`
+	Category    string    `json:"category"`
+	Pattern     string    `json:"pattern"`
+	Details     string    `json:"details,omitempty"`
+	Confidence  float64   `json:"confidence"`
+	Occurrences int       `json:"occurrences"`
+	FirstSeen   time.Time `json:"first_seen"`
+	LastSeen    time.Time `json:"last_seen"`
+	Project     string    `json:"project,omitempty"`
+}
+
+// SkillScoreRecord represents a skill score entry stored in skill_scores.
+type SkillScoreRecord struct {
+	ID        int64     `json:"id"`
+	Skill     string    `json:"skill"`
+	Score     float64   `json:"score"`
+	SessionID string    `json:"session_id,omitempty"`
+	Project   string    `json:"project,omitempty"`
+	Details   string    `json:"details,omitempty"`
+	ScoredAt  time.Time `json:"scored_at"`
+}
+
+// WorkflowStats holds aggregated stats for workflow events, grouped by category.
+type WorkflowStats struct {
+	Category    string           `json:"category"`
+	Patterns    []WorkflowEvent  `json:"patterns"`
+	TotalCount  int              `json:"total_count"`
+	AvgConfidence float64        `json:"avg_confidence"`
+}
+
+// SkillStats holds aggregated stats for a single skill.
+type SkillStats struct {
+	Skill      string    `json:"skill"`
+	AvgScore   float64   `json:"avg_score"`
+	UsageCount int       `json:"usage_count"`
+	Trend      []float64 `json:"trend"`
+}
+
+// CreateWorkflowEvent inserts a new workflow event into the database.
+func (s *Store) CreateWorkflowEvent(we *WorkflowEvent) error {
+	now := time.Now().UTC()
+	if we.FirstSeen.IsZero() {
+		we.FirstSeen = now
+	}
+	if we.LastSeen.IsZero() {
+		we.LastSeen = now
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO workflow_events (id, session_id, category, pattern, details, confidence, occurrences, first_seen, last_seen, project)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		we.ID, we.SessionID, we.Category, we.Pattern, we.Details,
+		we.Confidence, we.Occurrences,
+		we.FirstSeen.Format(time.RFC3339),
+		we.LastSeen.Format(time.RFC3339),
+		we.Project,
+	)
+	return err
+}
+
+// ListWorkflowEvents returns workflow events, optionally filtered by project, sorted by confidence DESC.
+func (s *Store) ListWorkflowEvents(project string) ([]WorkflowEvent, error) {
+	query := `SELECT id, session_id, category, pattern, details, confidence, occurrences, first_seen, last_seen, project
+	          FROM workflow_events`
+	args := []interface{}{}
+
+	if project != "" {
+		query += " WHERE project = ?"
+		args = append(args, project)
+	}
+	query += " ORDER BY confidence DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []WorkflowEvent
+	for rows.Next() {
+		var we WorkflowEvent
+		var firstSeen, lastSeen string
+		if err := rows.Scan(
+			&we.ID, &we.SessionID, &we.Category, &we.Pattern,
+			&we.Details, &we.Confidence, &we.Occurrences,
+			&firstSeen, &lastSeen, &we.Project,
+		); err != nil {
+			return nil, err
+		}
+		we.FirstSeen, _ = time.Parse(time.RFC3339, firstSeen)
+		we.LastSeen, _ = time.Parse(time.RFC3339, lastSeen)
+		events = append(events, we)
+	}
+	return events, rows.Err()
+}
+
+// UpdateWorkflowEvent updates occurrences, last_seen, and confidence for an existing workflow event.
+func (s *Store) UpdateWorkflowEvent(id string, occurrences int, confidence float64) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec(`
+		UPDATE workflow_events SET occurrences = ?, confidence = ?, last_seen = ? WHERE id = ?`,
+		occurrences, confidence, now, id,
+	)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("workflow event %q not found", id)
+	}
+	return nil
+}
+
+// GetWorkflowEventByPatternAndProject finds an existing workflow event by pattern+project.
+// Returns nil, nil if not found.
+func (s *Store) GetWorkflowEventByPatternAndProject(pattern, project string) (*WorkflowEvent, error) {
+	we := &WorkflowEvent{}
+	var firstSeen, lastSeen string
+
+	err := s.db.QueryRow(`
+		SELECT id, session_id, category, pattern, details, confidence, occurrences, first_seen, last_seen, project
+		FROM workflow_events WHERE pattern = ? AND project = ? LIMIT 1`,
+		pattern, project,
+	).Scan(
+		&we.ID, &we.SessionID, &we.Category, &we.Pattern,
+		&we.Details, &we.Confidence, &we.Occurrences,
+		&firstSeen, &lastSeen, &we.Project,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	we.FirstSeen, _ = time.Parse(time.RFC3339, firstSeen)
+	we.LastSeen, _ = time.Parse(time.RFC3339, lastSeen)
+	return we, nil
+}
+
+// GetWorkflowStats returns workflow events grouped by category with aggregate stats.
+func (s *Store) GetWorkflowStats(project string) ([]WorkflowStats, error) {
+	events, err := s.ListWorkflowEvents(project)
+	if err != nil {
+		return nil, err
+	}
+
+	grouped := make(map[string][]WorkflowEvent)
+	for _, we := range events {
+		grouped[we.Category] = append(grouped[we.Category], we)
+	}
+
+	var stats []WorkflowStats
+	for category, patterns := range grouped {
+		totalConf := 0.0
+		for _, p := range patterns {
+			totalConf += p.Confidence
+		}
+		avg := 0.0
+		if len(patterns) > 0 {
+			avg = totalConf / float64(len(patterns))
+		}
+		stats = append(stats, WorkflowStats{
+			Category:      category,
+			Patterns:      patterns,
+			TotalCount:    len(patterns),
+			AvgConfidence: avg,
+		})
+	}
+	return stats, nil
+}
+
+// CreateSkillScore inserts a new skill score record into the database.
+func (s *Store) CreateSkillScore(rec *SkillScoreRecord) error {
+	now := time.Now().UTC()
+	if rec.ScoredAt.IsZero() {
+		rec.ScoredAt = now
+	}
+
+	result, err := s.db.Exec(`
+		INSERT INTO skill_scores (skill, score, session_id, project, details, scored_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		rec.Skill, rec.Score, rec.SessionID, rec.Project,
+		rec.Details, rec.ScoredAt.Format(time.RFC3339),
+	)
+	if err != nil {
+		return err
+	}
+	id, _ := result.LastInsertId()
+	rec.ID = id
+	return nil
+}
+
+// ListSkillScoreRecords returns skill score records, optionally filtered by skill and project.
+func (s *Store) ListSkillScoreRecords(skill, project string) ([]SkillScoreRecord, error) {
+	query := `SELECT id, skill, score, session_id, project, details, scored_at FROM skill_scores WHERE 1=1`
+	args := []interface{}{}
+
+	if skill != "" {
+		query += " AND skill = ?"
+		args = append(args, skill)
+	}
+	if project != "" {
+		query += " AND project = ?"
+		args = append(args, project)
+	}
+	query += " ORDER BY scored_at DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []SkillScoreRecord
+	for rows.Next() {
+		var rec SkillScoreRecord
+		var scoredAt string
+		if err := rows.Scan(
+			&rec.ID, &rec.Skill, &rec.Score,
+			&rec.SessionID, &rec.Project, &rec.Details, &scoredAt,
+		); err != nil {
+			return nil, err
+		}
+		rec.ScoredAt, _ = time.Parse(time.RFC3339, scoredAt)
+		records = append(records, rec)
+	}
+	return records, rows.Err()
+}
+
+// GetSkillStats returns aggregated stats for skills. If skill is non-empty, returns stats for that skill only.
+func (s *Store) GetSkillStats(skill, project string) ([]SkillStats, error) {
+	records, err := s.ListSkillScoreRecords(skill, project)
+	if err != nil {
+		return nil, err
+	}
+
+	grouped := make(map[string][]float64)
+	for _, rec := range records {
+		grouped[rec.Skill] = append(grouped[rec.Skill], rec.Score)
+	}
+
+	var stats []SkillStats
+	for sk, scores := range grouped {
+		total := 0.0
+		for _, sc := range scores {
+			total += sc
+		}
+		avg := total / float64(len(scores))
+
+		// Trend: last 5 scores (scores are DESC ordered, so these are the most recent)
+		trend := scores
+		if len(trend) > 5 {
+			trend = trend[:5]
+		}
+
+		stats = append(stats, SkillStats{
+			Skill:      sk,
+			AvgScore:   avg,
+			UsageCount: len(scores),
+			Trend:      trend,
+		})
+	}
+	return stats, nil
 }
