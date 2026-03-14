@@ -72,7 +72,7 @@ async function main() {
   // Saves ~50-100ms per hook by avoiding child process spawn.
   let hookModule;
   const src = fs.readFileSync(scriptPath, 'utf8');
-  const hasRunExport = /\bmodule\.exports\b/.test(src) && /\brun\b/.test(src);
+  const hasRunExport = /module\.exports/.test(src) && /exports\.\s*run\b|{\s*run\s*[,}]/.test(src);
 
   if (hasRunExport) {
     try {

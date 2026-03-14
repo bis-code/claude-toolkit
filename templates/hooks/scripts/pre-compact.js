@@ -8,7 +8,7 @@
  * Saves a checkpoint marker to the telemetry feed so the MCP server
  * can correlate behavior before and after compaction events.
  *
- * Hook ID : context:pre-compact
+ * Hook ID : pre:compact
  * Profiles: standard, strict
  *
  * Event schema:
@@ -16,7 +16,7 @@
  */
 
 const path = require('path');
-const { appendFile, log, parseJSON, getProjectName, getSessionId, getToolkitDir } = require('./lib/utils');
+const { appendFile, log, parseJSON, getProjectName, getSessionId, getToolkitDir, ensureSession, logEventToDb } = require('./lib/utils');
 
 const TELEMETRY_FILE = path.join(getToolkitDir(), 'telemetry', 'events.jsonl');
 
@@ -33,14 +33,18 @@ function run(rawInput) {
 
     log(`[Toolkit] Saving checkpoint before compaction (project: ${project})`);
 
+    // Write to JSONL (legacy)
     const event = JSON.stringify({
       timestamp: new Date().toISOString(),
       session_id: sessionId,
       type: 'checkpoint',
       project,
     });
-
     appendFile(TELEMETRY_FILE, event + '\n');
+
+    // Write to DB
+    ensureSession(sessionId, project);
+    logEventToDb({ sessionId, type: 'checkpoint', details: `Compaction in ${project}` });
   } catch (err) {
     log(`[Toolkit] pre-compact error: ${err.message}`);
   }

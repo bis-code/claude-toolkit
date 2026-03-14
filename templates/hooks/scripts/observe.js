@@ -7,7 +7,7 @@
  * Appends a JSONL telemetry event for every tool call.
  * The MCP server reads events.jsonl to power metrics and dashboards.
  *
- * Hook ID : tool:observe
+ * Hook ID : pre:observe / post:observe
  * Profiles: standard, strict
  *
  * Event schema:
@@ -15,7 +15,7 @@
  */
 
 const path = require('path');
-const { appendFile, log, parseJSON, getProjectName, getSessionId, getToolkitDir } = require('./lib/utils');
+const { appendFile, log, parseJSON, getProjectName, getSessionId, getToolkitDir, ensureSession, logEventToDb } = require('./lib/utils');
 
 const TELEMETRY_FILE = path.join(getToolkitDir(), 'telemetry', 'events.jsonl');
 
@@ -51,6 +51,7 @@ function run(rawInput) {
     const project = getProjectName();
     const sessionId = getSessionId();
 
+    // Write to JSONL file (legacy telemetry)
     const event = JSON.stringify({
       timestamp: new Date().toISOString(),
       session_id: sessionId,
@@ -58,8 +59,12 @@ function run(rawInput) {
       target,
       project,
     });
-
     appendFile(TELEMETRY_FILE, event + '\n');
+
+    // Write to SQLite DB (powers TUI + web dashboard)
+    ensureSession(sessionId, project);
+    const details = `${tool}: ${target}`.substring(0, 200);
+    logEventToDb({ sessionId, type: 'tool_call', details });
   } catch (err) {
     log(`[Toolkit] observe error: ${err.message}`);
   }

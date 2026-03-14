@@ -8,7 +8,7 @@
  * Non-blocking by design: if the formatter is missing or fails, the hook logs and
  * continues. Code correctness takes precedence over formatting enforcement.
  *
- * Hook ID : post:edit:quality-gate
+ * Hook ID : post:quality-gate
  * Profiles: standard, strict
  *
  * Formatter map:

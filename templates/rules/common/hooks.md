@@ -14,7 +14,7 @@ Hooks run automatically at defined points in the Claude agent lifecycle. They en
 
 ## Configuration
 
-Hooks are defined in `.claude/settings.json`:
+Hooks are defined in `.claude/hooks/hooks.json` (managed by the toolkit):
 
 ```json
 {
@@ -56,34 +56,49 @@ Prompts degrade over long conversations. Hooks do not. Use hooks for:
 
 ## Example: Block Direct Commits to Main
 
-```bash
-#!/bin/bash
-# scripts/hooks/pre-bash.sh
-# Runs before every Bash tool call
+```javascript
+// .claude/hooks/scripts/block-main-commit.js
+const { parseJSON, log } = require('./lib/utils');
 
-COMMAND="$1"
+function run(rawInput) {
+  const payload = parseJSON(rawInput);
+  const command = (payload.tool_input || {}).command || '';
 
-if echo "$COMMAND" | grep -q "git commit" && git branch --show-current | grep -q "^main$"; then
-  echo "ERROR: Direct commit to main is not allowed. Create a feature branch first."
-  exit 1
-fi
+  if (/git commit/.test(command)) {
+    const { execSync } = require('child_process');
+    const branch = execSync('git branch --show-current', { encoding: 'utf8' }).trim();
+    if (branch === 'main') {
+      log('[Toolkit] Blocked: direct commit to main');
+      return JSON.stringify({ error: 'Direct commit to main is not allowed. Create a feature branch first.' });
+    }
+  }
+  return rawInput;
+}
+module.exports = { run };
 ```
 
 ## Example: Test Gate Before Commit
 
-```bash
-#!/bin/bash
-# Only runs when the Bash command looks like a commit
+```javascript
+// .claude/hooks/scripts/test-gate.js
+const { parseJSON, log } = require('./lib/utils');
+const { execSync } = require('child_process');
 
-COMMAND="$1"
+function run(rawInput) {
+  const payload = parseJSON(rawInput);
+  const command = (payload.tool_input || {}).command || '';
 
-if echo "$COMMAND" | grep -q "git commit"; then
-  echo "Running test suite before commit..."
-  if ! npm test --silent; then
-    echo "ERROR: Tests must pass before committing. Fix failures first."
-    exit 1
-  fi
-fi
+  if (/git commit/.test(command)) {
+    log('[Toolkit] Running tests before commit...');
+    try {
+      execSync('npm test --silent', { timeout: 30000 });
+    } catch {
+      return JSON.stringify({ error: 'Tests must pass before committing. Fix failures first.' });
+    }
+  }
+  return rawInput;
+}
+module.exports = { run };
 ```
 
 ## Best Practices
@@ -96,6 +111,6 @@ fi
 
 ## What Hooks Cannot Do
 
-- Hooks cannot modify the tool's input before it runs (they can only block or allow).
+- Hooks can modify stdout output (which Claude Code reads as the hook result). Use this to block by returning `{ "error": "reason" }`.
 - Hooks cannot inject new tool calls into the agent's plan.
 - Hooks that exit non-zero abort the tool call — the agent sees the hook's stderr as an error message.

@@ -159,7 +159,7 @@ Every new function or behavior must have tests covering all 8 categories. Docume
 | 1 | **Null / undefined input** | Function receives null or undefined where an object or value is expected |
 | 2 | **Empty string / empty array** | Zero-length inputs at every layer that accepts strings or collections |
 | 3 | **Invalid type** | String where a number is expected, object where a primitive is expected |
-| 4 **Boundary values** | Off-by-one at min and max — test N-1, N, and N+1 for any numeric limit |
+| 4 | **Boundary values** | Off-by-one at min and max — test N-1, N, and N+1 for any numeric limit |
 | 5 | **Error conditions** | Network failures, database errors, external service timeouts |
 | 6 | **Race conditions** | Concurrent calls to the same stateful function or resource |
 | 7 | **Large data sets** | Behavior with 10,000+ items — correctness AND performance |

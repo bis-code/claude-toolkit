@@ -8,15 +8,15 @@
  * Logs session end to stderr and appends a session_end marker
  * to the telemetry feed so the MCP server can compute session duration.
  *
- * Hook ID : session:end
- * Profiles: standard, strict
+ * Hook ID : stop:session-end
+ * Profiles: minimal, standard, strict
  *
  * Event schema:
  *   { timestamp, session_id, type: "session_end", project }
  */
 
 const path = require('path');
-const { appendFile, log, parseJSON, getProjectName, getSessionId, getToolkitDir } = require('./lib/utils');
+const { appendFile, log, parseJSON, getProjectName, getSessionId, getToolkitDir, dbExec, logEventToDb } = require('./lib/utils');
 
 const TELEMETRY_FILE = path.join(getToolkitDir(), 'telemetry', 'events.jsonl');
 
@@ -33,14 +33,19 @@ function run(rawInput) {
 
     log(`[Toolkit] Session ending (project: ${project}, session: ${sessionId})`);
 
+    // Write to JSONL (legacy)
     const event = JSON.stringify({
       timestamp: new Date().toISOString(),
       session_id: sessionId,
       type: 'session_end',
       project,
     });
-
     appendFile(TELEMETRY_FILE, event + '\n');
+
+    // Update session ended_at in DB
+    const now = new Date().toISOString();
+    dbExec(`UPDATE sessions SET ended_at = '${now}' WHERE id = '${sessionId}' AND ended_at IS NULL;`);
+    logEventToDb({ sessionId, type: 'session_end', details: `Project: ${project}` });
   } catch (err) {
     log(`[Toolkit] session-end error: ${err.message}`);
   }

@@ -9,8 +9,8 @@
  * only. The rationale: a hook that silently blocks causes confusion and
  * erodes trust in the tool. Loud warnings are more actionable.
  *
- * Hook ID : pre:tool:secret-detector
- * Profiles: minimal, standard, strict
+ * Hook ID : pre:secret-detector
+ * Profiles: standard, strict
  *
  * Patterns checked:
  *   sk-          OpenAI API keys

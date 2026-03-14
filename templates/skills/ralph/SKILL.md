@@ -149,7 +149,7 @@ Task(subagent_type="tdd-guide"):
 
 For complex stories (cross-module, migration-safety, or stories that failed once with tdd-guide):
 ```
-Task(subagent_type="senior-dev"):
+Task(subagent_type="planner"):
   "Implement this plan. The story is complex — consider architecture implications.
    Plan: <approved plan from Phase 2>.
    Test/lint commands: <from config>.

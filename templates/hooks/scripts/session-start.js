@@ -12,7 +12,7 @@
  * Profiles: minimal, standard, strict
  */
 
-const { log, output, parseJSON, getProjectName, getSessionId } = require('./lib/utils');
+const { log, output, parseJSON, getProjectName, getSessionId, ensureSession, logEventToDb } = require('./lib/utils');
 
 /**
  * @param {string} rawInput - Raw stdin JSON string from Claude Code
@@ -20,12 +20,14 @@ const { log, output, parseJSON, getProjectName, getSessionId } = require('./lib/
  */
 function run(rawInput) {
   try {
-    // parseJSON returns {} on failure — intentionally unused here;
-    // we parse for forward compatibility if the payload gains fields we need.
     parseJSON(rawInput);
 
     const project = getProjectName();
     const sessionId = getSessionId();
+
+    // Register session in the database
+    ensureSession(sessionId, project);
+    logEventToDb({ sessionId, type: 'session_start', details: `Project: ${project}` });
 
     log(`[Toolkit] Session started (project: ${project}, session: ${sessionId})`);
     output(`[Toolkit Context] Project: ${project}\n`);

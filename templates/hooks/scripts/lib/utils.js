@@ -134,6 +134,68 @@ function getSessionId() {
   return process.env.CLAUDE_SESSION_ID || `session-${Date.now()}`;
 }
 
+/**
+ * Get the path to the toolkit SQLite database.
+ * @returns {string}
+ */
+function getDbPath() {
+  return path.join(os.homedir(), '.claude-toolkit', 'store.db');
+}
+
+/**
+ * Execute a SQL statement against the toolkit database.
+ * Uses the sqlite3 CLI (available on macOS/Linux).
+ * Fails silently — hooks must never crash Claude Code.
+ * @param {string} sql
+ */
+function dbExec(sql) {
+  try {
+    const dbPath = getDbPath();
+    if (!fs.existsSync(dbPath)) return;
+    const { execSync } = require('child_process');
+    execSync(`sqlite3 "${dbPath}" "${sql.replace(/"/g, '""')}"`, {
+      timeout: 3000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch {
+    // Silent — never block Claude Code
+  }
+}
+
+/**
+ * Ensure a session row exists in the database.
+ * Creates if missing, no-op if already there.
+ * @param {string} sessionId
+ * @param {string} project
+ */
+function ensureSession(sessionId, project) {
+  const now = new Date().toISOString();
+  const safeId = (sessionId || '').replace(/'/g, "''");
+  const safeProject = (project || '').replace(/'/g, "''");
+  dbExec(
+    `INSERT OR IGNORE INTO sessions (id, project, started_at, tasks_completed, tasks_failed, tasks_verified) VALUES ('${safeId}', '${safeProject}', '${now}', 0, 0, 0);`
+  );
+}
+
+/**
+ * Log an event to the database.
+ * @param {object} opts
+ * @param {string} opts.sessionId
+ * @param {string} opts.type - e.g. 'tool_call', 'session_start'
+ * @param {string} opts.details
+ * @param {string} [opts.result] - 'success' or 'failure'
+ */
+function logEventToDb({ sessionId, type, details, result }) {
+  const now = new Date().toISOString();
+  const safeId = (sessionId || '').replace(/'/g, "''");
+  const safeType = (type || '').replace(/'/g, "''");
+  const safeDetails = (details || '').replace(/'/g, "''").substring(0, 200);
+  const safeResult = (result || 'success').replace(/'/g, "''");
+  dbExec(
+    `INSERT INTO events (session_id, type, details, result, timestamp) VALUES ('${safeId}', '${safeType}', '${safeDetails}', '${safeResult}', '${now}');`
+  );
+}
+
 module.exports = {
   MAX_STDIN,
   getClaudeDir,
@@ -148,4 +210,8 @@ module.exports = {
   parseJSON,
   getProjectName,
   getSessionId,
+  getDbPath,
+  dbExec,
+  ensureSession,
+  logEventToDb,
 };

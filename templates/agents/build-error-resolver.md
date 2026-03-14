@@ -142,7 +142,7 @@ Invoke a different agent when the situation requires more than fixing an error:
 | Situation | Use instead |
 |-----------|------------|
 | The build passes but the code has structural problems (long functions, poor naming, duplicated logic) | `refactor-cleaner` |
-| The errors are symptoms of a flawed architecture (circular dependencies, wrong abstraction boundaries, module coupling) | `architect` |
+| The errors are symptoms of a flawed architecture (circular dependencies, wrong abstraction boundaries, module coupling) | `architect-reviewer` |
 | A new feature or significant API change is needed to resolve the errors properly | `planner` |
 | Tests are failing (not the build itself) | `tdd-guide` |
 | The errors reveal a security issue (hardcoded secret, unsafe input handling) | `security-reviewer` |

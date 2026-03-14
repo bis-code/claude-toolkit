@@ -9,7 +9,7 @@
  * computes a simple effectiveness score, and appends a skill_eval event
  * to the telemetry feed for the MCP server to consume.
  *
- * Hook ID : session:evaluate
+ * Hook ID : stop:evaluate-session
  * Profiles: standard, strict
  *
  * Scoring rubric (0.0–1.0):
@@ -28,6 +28,7 @@ const {
   getSessionId,
   getToolkitDir,
   readFile,
+  dbExec,
 } = require('./lib/utils');
 
 const TELEMETRY_FILE = path.join(getToolkitDir(), 'telemetry', 'events.jsonl');
@@ -95,8 +96,8 @@ function computeScore(events) {
   // Failures: -0.1 per failure, max -0.3
   score -= Math.min(0.3, failures * 0.1);
 
-  // Reasonable session size bonus
-  if (events.length < 100) score += 0.2;
+  // Reasonable session size bonus (only if there were actual events)
+  if (events.length > 0 && events.length < 100) score += 0.2;
 
   return Math.round(Math.max(0.0, Math.min(1.0, score)) * 10) / 10;
 }
@@ -128,6 +129,13 @@ function run(rawInput) {
     });
 
     appendFile(TELEMETRY_FILE, evalEvent + '\n');
+
+    // Write skill score to DB
+    const now = new Date().toISOString();
+    dbExec(
+      `INSERT INTO skill_scores (name, effectiveness, invocations, last_scored_at) VALUES ('${skill}', ${score}, 1, '${now}') ON CONFLICT(name) DO UPDATE SET effectiveness = (effectiveness + ${score}) / 2.0, invocations = invocations + 1, last_scored_at = '${now}';`
+    );
+
     log(`[Toolkit] Session evaluated: ${skill} scored ${score}`);
   } catch (err) {
     log(`[Toolkit] evaluate-session error: ${err.message}`);

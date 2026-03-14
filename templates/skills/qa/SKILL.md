@@ -98,7 +98,7 @@ If `--focus` is set, boost the severity of any finding whose description matches
 - MEDIUM → mark for GitHub issue creation
 - LOW → skip
 
-**Otherwise (interactive)**: Present the findings table to the user using `AskUserQuestion`. For each finding (or group), ask:
+**Otherwise (interactive)**: Present the findings table to the user. For each finding (or group), ask:
 - **Fix** — apply a guided fix
 - **Issue** — create a GitHub issue with label `claude-ready`
 - **Skip** — ignore this finding
