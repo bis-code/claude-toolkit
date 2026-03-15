@@ -11,91 +11,32 @@
 </head>
 <body>
 
-<div class="dashboard">
-
-  <!-- ── Header ─────────────────────────────────────────────── -->
+  <!-- ── Header bar ──────────────────────────────────────────── -->
   <header class="header">
-    <span class="header__title">CLAUDE TOOLKIT v5.0.0</span>
-    <div class="live-indicator">
-      <span class="live-dot" id="live-dot"></span>
-      <span id="live-text">Connecting…</span>
+    <div class="header__left">
+      <span class="header__title">CLAUDE TOOLKIT</span>
+      <span class="header__version">v5.0.0</span>
     </div>
-    <span class="header__port">:<!-- port injected by JS --><span id="header-port"></span></span>
+    <div class="header__right">
+      <span class="live-dot" id="live-dot"></span>
+      <span class="live-text" id="live-text">Connecting...</span>
+    </div>
   </header>
 
-  <!-- ── Active session ─────────────────────────────────────── -->
-  <section class="panel">
-    <div class="panel__title">Active Session</div>
-    <div class="active-session" id="active-session-content">
-      <span class="text-muted">Loading…</span>
+  <!-- ── SVG canvas (fills viewport below header) ────────────── -->
+  <svg id="graph" class="graph"></svg>
+
+  <!-- ── Detail panel overlay (right side, slides in) ────────── -->
+  <div class="detail-panel" id="detail-panel">
+    <div class="detail-panel__header">
+      <span class="detail-panel__title" id="detail-title">Details</span>
+      <button class="detail-panel__close" id="detail-close">&times;</button>
     </div>
-  </section>
-
-  <!-- ── Live events ────────────────────────────────────────── -->
-  <section class="panel">
-    <div class="panel__title">Live Events</div>
-    <div class="events-feed" id="events-feed">
-      <div class="empty-feed">Waiting for events…</div>
-    </div>
-  </section>
-
-  <!-- ── Recent sessions ────────────────────────────────────── -->
-  <section class="panel">
-    <div class="panel__title">Recent Sessions</div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Session ID</th>
-            <th>Project</th>
-            <th>Duration</th>
-            <th>Tasks</th>
-            <th>Started</th>
-          </tr>
-        </thead>
-        <tbody id="sessions-tbody">
-          <tr><td colspan="5" class="empty-state">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ── Skills + Patterns ──────────────────────────────────── -->
-  <div class="panels-row">
-
-    <!-- Skills panel -->
-    <section class="panel">
-      <div class="panel__title">Skills — Effectiveness</div>
-      <div class="skill-list" id="skills-list">
-        <div class="empty-state">Loading…</div>
-      </div>
-    </section>
-
-    <!-- Learned patterns panel -->
-    <section class="panel">
-      <div class="panel__title">Learned Patterns</div>
-      <div class="pattern-list" id="patterns-list">
-        <div class="empty-state">Loading…</div>
-      </div>
-    </section>
-
+    <div class="detail-panel__body" id="detail-body"></div>
   </div>
 
-  <!-- ── Patrol ──────────────────────────────────────────────── -->
-  <section class="panel">
-    <div class="panel__title">Patrol</div>
-
-    <div class="patrol-status">
-      <div class="patrol-light patrol-light--green" id="patrol-light"></div>
-      <span class="patrol-label" id="patrol-status-label">Initialising…</span>
-    </div>
-
-    <div class="alert-list" id="patrol-alerts">
-      <div class="no-alerts">Monitoring all sessions…</div>
-    </div>
-  </section>
-
-</div>
+  <!-- ── Tooltip ─────────────────────────────────────────────── -->
+  <div class="tooltip" id="tooltip"></div>
 
 <script src="/app.js"></script>
 </body>
