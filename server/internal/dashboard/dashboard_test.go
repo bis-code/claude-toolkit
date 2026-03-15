@@ -415,15 +415,15 @@ func TestDashboard_ContentTypeJSON(t *testing.T) {
 	}
 }
 
-// TestDashboard_APIPatrol_RequiresSessionID verifies that GET /api/patrol
-// without a session_id query param returns HTTP 400.
-func TestDashboard_APIPatrol_RequiresSessionID(t *testing.T) {
+// TestDashboard_APIPatrol_AllSessions verifies that GET /api/patrol
+// without a session_id returns patrol for all sessions (200).
+func TestDashboard_APIPatrol_AllSessions(t *testing.T) {
 	ts := newTestServer(t, nil)
 	defer ts.Close()
 
 	resp := get(t, ts, "/api/patrol")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("GET /api/patrol (no session_id): want 400, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/patrol: want 200, got %d", resp.StatusCode)
 	}
 }
 

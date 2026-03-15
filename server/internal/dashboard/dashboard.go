@@ -311,28 +311,63 @@ func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 // Query param: session_id (required).
 func (s *Server) handlePatrol(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session_id")
-	if sessionID == "" {
-		http.Error(w, "session_id is required", http.StatusBadRequest)
-		return
+
+	type sessionAlert struct {
+		SessionID string         `json:"session_id"`
+		Project   string         `json:"project"`
+		Alerts    []patrol.Alert `json:"alerts"`
 	}
 
-	events, err := s.store.ListEvents(sessionID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	var results []sessionAlert
+
+	if sessionID != "" {
+		// Single session mode
+		events, err := s.store.ListEvents(sessionID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		alerts := s.detector.Analyze(events)
+		if alerts == nil {
+			alerts = []patrol.Alert{}
+		}
+		results = append(results, sessionAlert{SessionID: sessionID, Alerts: alerts})
+	} else {
+		// All sessions mode — analyze each session independently
+		sessions, err := s.store.ListSessions("", 10)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, sess := range sessions {
+			events, err := s.store.ListEvents(sess.ID)
+			if err != nil {
+				continue
+			}
+			alerts := s.detector.Analyze(events)
+			if len(alerts) > 0 {
+				results = append(results, sessionAlert{
+					SessionID: sess.ID,
+					Project:   sess.Project,
+					Alerts:    alerts,
+				})
+			}
+		}
 	}
 
-	alerts := s.detector.Analyze(events)
-
-	// Always return an array, never null.
-	if alerts == nil {
-		alerts = []patrol.Alert{}
+	// Flatten all alerts for backward compat
+	var allAlerts []patrol.Alert
+	for _, r := range results {
+		allAlerts = append(allAlerts, r.Alerts...)
+	}
+	if allAlerts == nil {
+		allAlerts = []patrol.Alert{}
 	}
 
 	writeJSON(w, map[string]interface{}{
-		"session_id": sessionID,
-		"alerts":     alerts,
-		"count":      len(alerts),
+		"alerts":   allAlerts,
+		"sessions": results,
+		"count":    len(allAlerts),
 	})
 }
 

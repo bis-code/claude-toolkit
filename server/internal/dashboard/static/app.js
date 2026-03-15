@@ -242,15 +242,24 @@ function renderPatrol() {
     statusEl.style.color = 'var(--warning)';
   }
 
-  listEl.innerHTML = alerts.map(alert => `
-    <div class="alert-item alert-item--${alert.severity}">
-      <div class="alert-item__header">
-        <span class="badge ${severityBadgeClass(alert.severity)}">${esc(alert.severity)}</span>
-        <span class="alert-item__pattern">${esc(alert.pattern)}</span>
-        <span class="text-muted" style="font-size:10px">${alert.event_count} events</span>
+  const sessions = state.patrolSessions || [];
+  listEl.innerHTML = sessions.map(sess => `
+    <div class="patrol-session">
+      <div class="patrol-session__header text-muted" style="font-size:11px;margin-bottom:4px">
+        <span class="font-mono">${esc(sess.session_id.substring(0,12))}</span>
+        ${sess.project ? `— <span class="text-accent">${esc(sess.project)}</span>` : ''}
       </div>
-      <div class="alert-item__message">${esc(alert.message)}</div>
-      <div class="alert-item__suggestion">Suggestion: ${esc(alert.suggestion)}</div>
+      ${sess.alerts.map(alert => `
+        <div class="alert-item alert-item--${alert.severity}">
+          <div class="alert-item__header">
+            <span class="badge ${severityBadgeClass(alert.severity)}">${esc(alert.severity)}</span>
+            <span class="alert-item__pattern">${esc(alert.pattern)}</span>
+            <span class="text-muted" style="font-size:10px">${alert.event_count} events</span>
+          </div>
+          <div class="alert-item__message">${esc(alert.message)}</div>
+          <div class="alert-item__suggestion">Suggestion: ${esc(alert.suggestion)}</div>
+        </div>
+      `).join('')}
     </div>
   `).join('');
 }
@@ -274,7 +283,6 @@ async function loadSessions() {
     state.sessions = data.sessions;
     renderActiveSession();
     renderSessions();
-    populatePatrolSelect();
   }
 }
 
@@ -302,22 +310,13 @@ async function loadPatterns() {
   }
 }
 
-async function loadPatrol(sessionID) {
-  if (!sessionID) return;
-  const data = await apiFetch('/api/patrol?session_id=' + encodeURIComponent(sessionID));
-  if (data && data.alerts) {
-    state.patrolAlerts = data.alerts;
+async function loadPatrol() {
+  const data = await apiFetch('/api/patrol');
+  if (data) {
+    state.patrolAlerts = data.alerts || [];
+    state.patrolSessions = data.sessions || [];
     renderPatrol();
   }
-}
-
-function populatePatrolSelect() {
-  const sel = $('patrol-session-select');
-  if (!sel) return;
-  const current = sel.value;
-  sel.innerHTML = '<option value="">Select a session…</option>' +
-    state.sessions.map(s => `<option value="${esc(s.id)}">${esc(s.id.substring(0,12))} — ${esc(s.project)}</option>`).join('');
-  if (current) sel.value = current;
 }
 
 // ── SSE connection ────────────────────────────────────────────
@@ -338,10 +337,7 @@ function debouncedRefresh() {
     loadSessions();
     loadSkills();
     loadPatterns();
-    // Auto-refresh patrol for the active session
-    const sel = $('patrol-session-select');
-    if (sel && sel.value) loadPatrol(sel.value);
-    else if (state.sessions.length > 0) loadPatrol(state.sessions[0].id);
+    loadPatrol();
   }, 2000);
 }
 
@@ -374,14 +370,7 @@ function connectSSE() {
   };
 }
 
-// ── Patrol session select handler ─────────────────────────────
-
-function onPatrolSelectChange() {
-  const sel = $('patrol-session-select');
-  if (sel && sel.value) {
-    loadPatrol(sel.value);
-  }
-}
+// ── Patrol (auto — no manual session select) ─────────────────
 
 // ── Init ──────────────────────────────────────────────────────
 
@@ -395,18 +384,8 @@ async function init() {
     loadRecentEvents(),
     loadSkills(),
     loadPatterns(),
+    loadPatrol(),
   ]);
-
-  // Load patrol for most recent session by default if any
-  if (state.sessions.length > 0) {
-    const sel = $('patrol-session-select');
-    if (sel) {
-      sel.value = state.sessions[0].id;
-      loadPatrol(state.sessions[0].id);
-    }
-  } else {
-    renderPatrol();
-  }
 
   connectSSE();
 
@@ -415,9 +394,7 @@ async function init() {
     loadSessions();
     loadSkills();
     loadPatterns();
-    if (state.sessions.length > 0 && !$('patrol-session-select')?.value) {
-      loadPatrol(state.sessions[0].id);
-    }
+    loadPatrol();
   }, 30000);
 }
 
