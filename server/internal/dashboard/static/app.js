@@ -726,6 +726,7 @@ function closeDetailPanel() {
   const panel = $('detail-panel');
   panel.classList.remove('detail-panel--open');
   clearDetailRefresh();
+  clearTranscriptRefresh();
 }
 
 function clearDetailRefresh() {
@@ -808,6 +809,13 @@ function renderSessionDetail(session, events) {
   html += detailStat('Tasks Completed', String(session.tasks_completed || 0), 'success');
   html += detailStat('Tasks Failed', String(session.tasks_failed || 0), 'danger');
   html += '</div>';
+
+  // Transcript button
+  if (session.transcript_path) {
+    html += '<div class="detail-section">';
+    html += '<button class="detail-btn" onclick="loadTranscript(\'' + esc(session.id) + '\')">View Live Chat</button>';
+    html += '</div>';
+  }
 
   // Event timeline
   html += '<div class="detail-section">';
@@ -897,6 +905,124 @@ function getResultColor(result) {
   if (r === 'warning') return 'warning';
   return 'info';
 }
+
+// ── Transcript viewer ────────────────────────────────────────
+
+let transcriptRefreshTimer = null;
+
+async function loadTranscript(sessionId) {
+  const body = $('detail-body');
+  const title = $('detail-title');
+  title.textContent = 'Live Chat';
+  body.innerHTML = '<p style="color:' + C.muted + ';font-size:11px;">Loading transcript...</p>';
+
+  await renderTranscript(sessionId);
+
+  // Auto-refresh every 3 seconds for live chat
+  clearTranscriptRefresh();
+  transcriptRefreshTimer = setInterval(function() {
+    renderTranscript(sessionId);
+  }, 3000);
+}
+
+function clearTranscriptRefresh() {
+  if (transcriptRefreshTimer) {
+    clearInterval(transcriptRefreshTimer);
+    transcriptRefreshTimer = null;
+  }
+}
+
+async function renderTranscript(sessionId) {
+  const data = await apiFetch('/api/transcript?session_id=' + encodeURIComponent(sessionId));
+  const body = $('detail-body');
+  if (!body) return;
+
+  if (!data || data.error) {
+    body.innerHTML = '<p style="color:' + C.danger + ';font-size:11px;">' + esc(data ? data.error : 'Failed to load') + '</p>';
+    return;
+  }
+
+  const messages = data.messages || [];
+  if (messages.length === 0) {
+    body.innerHTML = '<p style="color:' + C.muted + ';font-size:11px;">No messages yet.</p>';
+    return;
+  }
+
+  // Scroll position preservation
+  const wasAtBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 50;
+
+  let html = '<div class="transcript">';
+  messages.forEach(function(msg) {
+    if (msg.type === 'user') {
+      html += '<div class="chat-msg chat-msg--user">';
+      html += '<div class="chat-msg__role">You</div>';
+      html += '<div class="chat-msg__text">' + escAndFormat(msg.text) + '</div>';
+      if (msg.timestamp) html += '<div class="chat-msg__time">' + fmtTime(msg.timestamp) + '</div>';
+      html += '</div>';
+    } else if (msg.type === 'assistant') {
+      html += '<div class="chat-msg chat-msg--assistant">';
+      html += '<div class="chat-msg__role">Claude</div>';
+      html += '<div class="chat-msg__text">' + escAndFormat(msg.text) + '</div>';
+      if (msg.timestamp) html += '<div class="chat-msg__time">' + fmtTime(msg.timestamp) + '</div>';
+      html += '</div>';
+    } else if (msg.type === 'tool_call') {
+      html += '<div class="chat-msg chat-msg--tool">';
+      html += '<div class="chat-msg__role">' + esc(msg.tool_name || 'Tool') + '</div>';
+      if (msg.tool_input) {
+        html += '<div class="chat-msg__code">' + esc(truncate(msg.tool_input, 300)) + '</div>';
+      }
+      html += '</div>';
+    } else if (msg.type === 'tool_result') {
+      html += '<div class="chat-msg chat-msg--result">';
+      html += '<div class="chat-msg__code">' + esc(truncate(msg.text, 300)) + '</div>';
+      html += '</div>';
+    }
+  });
+  html += '</div>';
+
+  body.innerHTML = html;
+
+  // Auto-scroll to bottom if user was at bottom
+  if (wasAtBottom) {
+    body.scrollTop = body.scrollHeight;
+  }
+}
+
+function escAndFormat(text) {
+  // Escape HTML then add basic formatting
+  let s = esc(text);
+  // Code blocks
+  s = s.replace(/```([^`]*?)```/g, '<pre class="chat-code">$1</pre>');
+  // Inline code
+  s = s.replace(/`([^`]+)`/g, '<code class="chat-inline-code">$1</code>');
+  // Bold
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // Newlines
+  s = s.replace(/\n/g, '<br>');
+  return s;
+}
+
+// ── Live duration timer ──────────────────────────────────────
+
+// Update duration text in session nodes every second without full re-render
+setInterval(function() {
+  const svg = $('graph');
+  if (!svg) return;
+
+  state.sessions.forEach(function(session) {
+    const key = 'session-' + session.id;
+    const g = svg.querySelector('[data-node="' + key + '"]');
+    if (!g) return;
+
+    // Find the stat text element (3rd text = duration line)
+    const texts = g.querySelectorAll('text.node-stat');
+    if (texts.length === 0) return;
+
+    const duration = fmtDuration(session.started_at, session.ended_at);
+    const eventCount = state.events.filter(function(e) { return e.session_id === session.id; }).length || 0;
+    texts[0].textContent = duration + ' | ' + eventCount + ' events';
+  });
+}, 1000);
 
 // ── Data loading ─────────────────────────────────────────────
 

@@ -12,7 +12,7 @@
  * Profiles: minimal, standard, strict
  */
 
-const { log, parseJSON, getProjectName, getSessionId, ensureSession, logEventToDb } = require('./lib/utils');
+const { log, parseJSON, getProjectName, getSessionId, ensureSession, logEventToDb, dbExec } = require('./lib/utils');
 
 /**
  * @param {string} rawInput - Raw stdin JSON string from Claude Code
@@ -20,7 +20,7 @@ const { log, parseJSON, getProjectName, getSessionId, ensureSession, logEventToD
  */
 function run(rawInput) {
   try {
-    parseJSON(rawInput);
+    const payload = parseJSON(rawInput);
 
     const project = getProjectName();
     const sessionId = getSessionId();
@@ -28,6 +28,13 @@ function run(rawInput) {
     // Register session in the database
     ensureSession(sessionId, project);
     logEventToDb({ sessionId, type: 'session_start', details: `Project: ${project}` });
+
+    // Save transcript path if provided by Claude Code
+    const transcriptPath = payload.transcript_path || '';
+    if (transcriptPath) {
+      const safePath = transcriptPath.replace(/'/g, "''");
+      dbExec(`UPDATE sessions SET transcript_path = '${safePath}' WHERE id = '${sessionId}';`);
+    }
 
     log(`[Toolkit] Session started (project: ${project}, session: ${sessionId})`);
   } catch (err) {

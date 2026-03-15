@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 	confidence REAL DEFAULT 0,
 	tasks_completed INTEGER DEFAULT 0,
 	tasks_failed INTEGER DEFAULT 0,
-	tasks_verified INTEGER DEFAULT 0
+	tasks_verified INTEGER DEFAULT 0,
+	transcript_path TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 
@@ -169,6 +170,7 @@ type Session struct {
 	TasksCompleted int        `json:"tasks_completed"`
 	TasksFailed    int        `json:"tasks_failed"`
 	TasksVerified  int        `json:"tasks_verified"`
+	TranscriptPath string     `json:"transcript_path,omitempty"`
 }
 
 // Event represents a telemetry event in the database.
@@ -334,6 +336,15 @@ CREATE INDEX IF NOT EXISTS idx_skill_scores_skill ON skill_scores(skill);
 UPDATE schema_version SET version = 5;`
 		if _, err := db.Exec(migration); err != nil {
 			return fmt.Errorf("migration v5 failed: %w", err)
+		}
+	}
+
+	// Migration v6: Add transcript_path to sessions
+	if version < 6 {
+		migration := `ALTER TABLE sessions ADD COLUMN transcript_path TEXT DEFAULT '';
+UPDATE schema_version SET version = 6;`
+		if _, err := db.Exec(migration); err != nil {
+			return fmt.Errorf("migration v6 failed: %w", err)
 		}
 	}
 
@@ -771,7 +782,7 @@ func (s *Store) ListEvents(sessionID string) ([]*Event, error) {
 
 // ListSessions returns sessions, optionally filtered by project, ordered by started_at DESC.
 func (s *Store) ListSessions(project string, limit int) ([]*Session, error) {
-	query := "SELECT id, project, started_at, ended_at, summary, confidence, tasks_completed, tasks_failed, tasks_verified FROM sessions"
+	query := "SELECT id, project, started_at, ended_at, summary, confidence, tasks_completed, tasks_failed, tasks_verified, COALESCE(transcript_path, '') FROM sessions"
 	args := []interface{}{}
 
 	if project != "" {
@@ -802,6 +813,7 @@ func (s *Store) ListSessions(project string, limit int) ([]*Session, error) {
 			&sess.ID, &sess.Project, &startedAt, &endedAt,
 			&sess.Summary, &sess.Confidence,
 			&sess.TasksCompleted, &sess.TasksFailed, &sess.TasksVerified,
+			&sess.TranscriptPath,
 		)
 		if err != nil {
 			return nil, err
@@ -938,10 +950,10 @@ func (s *Store) ListRecentEvents(limit int) ([]*Event, error) {
 
 // SkillScore holds the aggregated effectiveness metrics for a skill (event type).
 type SkillScore struct {
-	Name        string  `json:"name"`
-	Total       int     `json:"total"`
-	Successes   int     `json:"successes"`
-	Failures    int     `json:"failures"`
+	Name          string  `json:"name"`
+	Total         int     `json:"total"`
+	Successes     int     `json:"successes"`
+	Failures      int     `json:"failures"`
 	Effectiveness float64 `json:"effectiveness"`
 }
 
@@ -1037,10 +1049,10 @@ type SkillScoreRecord struct {
 
 // WorkflowStats holds aggregated stats for workflow events, grouped by category.
 type WorkflowStats struct {
-	Category    string           `json:"category"`
-	Patterns    []WorkflowEvent  `json:"patterns"`
-	TotalCount  int              `json:"total_count"`
-	AvgConfidence float64        `json:"avg_confidence"`
+	Category      string          `json:"category"`
+	Patterns      []WorkflowEvent `json:"patterns"`
+	TotalCount    int             `json:"total_count"`
+	AvgConfidence float64         `json:"avg_confidence"`
 }
 
 // SkillStats holds aggregated stats for a single skill.

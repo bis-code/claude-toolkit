@@ -1,12 +1,14 @@
 package dashboard
 
 import (
+	"bufio"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 
@@ -87,6 +89,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/audit", s.handleAudit)
 	s.mux.HandleFunc("/api/skills", s.handleSkills)
 	s.mux.HandleFunc("/api/workflow", s.handleWorkflow)
+	s.mux.HandleFunc("/api/transcript", s.handleTranscript)
 
 	// Server-Sent Events stream.
 	s.mux.HandleFunc("/sse/events", s.handleSSE)
@@ -402,6 +405,153 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"rules": enriched,
 		"count": len(enriched),
+	})
+}
+
+// handleTranscript reads and parses a Claude Code transcript JSONL file.
+// Query param: session_id (required).
+// Returns parsed conversation messages (user/assistant text + tool calls).
+func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get session to find transcript path
+	sessions, err := s.store.ListSessions("", 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var transcriptPath string
+	for _, sess := range sessions {
+		if sess.ID == sessionID {
+			transcriptPath = sess.TranscriptPath
+			break
+		}
+	}
+
+	if transcriptPath == "" {
+		// Try to find it from the Claude projects directory
+		writeJSON(w, map[string]interface{}{
+			"messages": []interface{}{},
+			"error":    "transcript_path not set for this session",
+		})
+		return
+	}
+
+	// Read and parse the JSONL file
+	file, err := os.Open(transcriptPath)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{
+			"messages": []interface{}{},
+			"error":    fmt.Sprintf("cannot open transcript: %v", err),
+		})
+		return
+	}
+	defer file.Close()
+
+	type message struct {
+		Type      string `json:"type"`
+		Text      string `json:"text"`
+		Timestamp string `json:"timestamp"`
+		ToolName  string `json:"tool_name,omitempty"`
+		ToolInput string `json:"tool_input,omitempty"`
+	}
+
+	var messages []message
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB line buffer
+
+	for scanner.Scan() {
+		var raw map[string]interface{}
+		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
+			continue
+		}
+
+		msgType, _ := raw["type"].(string)
+		timestamp, _ := raw["timestamp"].(string)
+
+		if msgType != "user" && msgType != "assistant" {
+			continue
+		}
+
+		msgObj, ok := raw["message"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		contentArr, ok := msgObj["content"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		for _, c := range contentArr {
+			block, ok := c.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			blockType, _ := block["type"].(string)
+
+			switch blockType {
+			case "text":
+				text, _ := block["text"].(string)
+				if text != "" {
+					messages = append(messages, message{
+						Type:      msgType,
+						Text:      text,
+						Timestamp: timestamp,
+					})
+				}
+
+			case "tool_use":
+				name, _ := block["name"].(string)
+				inputBytes, _ := json.Marshal(block["input"])
+				inputStr := string(inputBytes)
+				if len(inputStr) > 500 {
+					inputStr = inputStr[:500] + "..."
+				}
+				messages = append(messages, message{
+					Type:      "tool_call",
+					Timestamp: timestamp,
+					ToolName:  name,
+					ToolInput: inputStr,
+				})
+
+			case "tool_result":
+				// Extract text from tool results
+				if content, ok := block["content"].([]interface{}); ok {
+					for _, rc := range content {
+						if rcMap, ok := rc.(map[string]interface{}); ok {
+							if rcMap["type"] == "text" {
+								text, _ := rcMap["text"].(string)
+								if len(text) > 500 {
+									text = text[:500] + "..."
+								}
+								messages = append(messages, message{
+									Type:      "tool_result",
+									Text:      text,
+									Timestamp: timestamp,
+								})
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Return last 200 messages (most recent conversation)
+	if len(messages) > 200 {
+		messages = messages[len(messages)-200:]
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"messages": messages,
+		"count":    len(messages),
 	})
 }
 
