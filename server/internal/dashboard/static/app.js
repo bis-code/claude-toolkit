@@ -126,6 +126,15 @@ const draggedNodes = new Set();
 // Detail panel auto-refresh interval ID
 let detailRefreshTimer = null;
 
+// Currently selected node key (for highlighting)
+let selectedNodeKey = null;
+
+// Zoom/pan state
+const camera = { x: 0, y: 0, scale: 1 };
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 3;
+const ZOOM_STEP = 0.1;
+
 // ── DOM refs ─────────────────────────────────────────────────
 
 const $ = (id) => document.getElementById(id);
@@ -133,8 +142,8 @@ const $ = (id) => document.getElementById(id);
 // ── Layout calculation ───────────────────────────────────────
 
 function calculateLayout() {
-  const svg = $('graph');
-  const w = svg.clientWidth || window.innerWidth;
+  const container = $('graph-container');
+  const w = (container ? container.clientWidth : window.innerWidth) || window.innerWidth;
 
   // Patrol hub — always centered
   if (!draggedNodes.has('patrol')) {
@@ -270,30 +279,31 @@ function buildEdgesGroup() {
 // ── Full graph render ────────────────────────────────────────
 
 function renderGraph() {
-  const svg = $('graph');
-  svg.innerHTML = '';
+  const root = $('graph-root');
+  root.innerHTML = '';
 
   calculateLayout();
+  applyCameraTransform();
 
   const sessions = state.sessions;
   const skills = state.skills;
   const patterns = state.patterns;
   const patrolAlerts = state.patrolAlerts;
   const sessionAlertMap = buildSessionAlertMap();
-  const w = svg.clientWidth || window.innerWidth;
+  const w = ($('graph-container') || {}).clientWidth || window.innerWidth;
 
   // Row labels
-  addRowLabel(svg, 16, LAYOUT.patrolY - 30, 'PATROL');
-  if (sessions.length > 0) addRowLabel(svg, 16, LAYOUT.sessionY - 55, 'SESSIONS');
-  if (skills.length > 0) addRowLabel(svg, 16, LAYOUT.skillY - 35, 'SKILLS');
-  if (patterns.length > 0) addRowLabel(svg, 16, LAYOUT.patternY - 30, 'PATTERNS');
+  addRowLabel(root, 16, LAYOUT.patrolY - 30, 'PATROL');
+  if (sessions.length > 0) addRowLabel(root, 16, LAYOUT.sessionY - 55, 'SESSIONS');
+  if (skills.length > 0) addRowLabel(root, 16, LAYOUT.skillY - 35, 'SKILLS');
+  if (patterns.length > 0) addRowLabel(root, 16, LAYOUT.patternY - 30, 'PATTERNS');
 
   // Edges layer (behind nodes)
-  svg.appendChild(buildEdgesGroup());
+  root.appendChild(buildEdgesGroup());
 
   // Nodes layer
   const nodesGroup = svgEl('g', { class: 'nodes-layer' });
-  svg.appendChild(nodesGroup);
+  root.appendChild(nodesGroup);
 
   // Patrol hub
   renderPatrolNode(nodesGroup, patrolAlerts);
@@ -321,8 +331,24 @@ function renderGraph() {
       class: 'empty-label',
     });
     emptyText.textContent = 'Waiting for data...';
-    svg.appendChild(emptyText);
+    root.appendChild(emptyText);
   }
+
+  // Re-apply selection highlight
+  if (selectedNodeKey) {
+    const selected = root.querySelector('[data-node="' + selectedNodeKey + '"]');
+    if (selected) selected.classList.add('node-selected');
+  }
+}
+
+function applyCameraTransform() {
+  const root = $('graph-root');
+  if (root) {
+    root.setAttribute('transform',
+      'translate(' + camera.x + ',' + camera.y + ') scale(' + camera.scale + ')');
+  }
+  const indicator = $('zoom-indicator');
+  if (indicator) indicator.textContent = Math.round(camera.scale * 100) + '%';
 }
 
 function addRowLabel(svg, x, y, text) {
@@ -391,8 +417,8 @@ function renderPatrolNode(parent, alerts) {
   sublabel.textContent = alertCount === 0 ? 'All clear' : alertCount + ' alert' + (alertCount !== 1 ? 's' : '');
   g.appendChild(sublabel);
 
-  // Interactions
-  g.addEventListener('dblclick', () => openDetailPanel('patrol'));
+  // Interactions — click selects, dblclick also selects
+  g.addEventListener('click', (e) => { e.stopPropagation(); selectNode('patrol'); openDetailPanel('patrol'); });
   g.addEventListener('mouseenter', (e) => showTooltip(e, 'Patrol Hub: ' + alertCount + ' alerts'));
   g.addEventListener('mouseleave', hideTooltip);
 
@@ -470,8 +496,8 @@ function renderSessionNode(parent, session, alertSeverity) {
     g.appendChild(badgeText);
   }
 
-  // Interactions
-  g.addEventListener('dblclick', () => openDetailPanel('session', session));
+  // Interactions — click selects and shows detail
+  g.addEventListener('click', (e) => { e.stopPropagation(); selectNode(key); openDetailPanel('session', session); });
   g.addEventListener('mouseenter', (e) => {
     const tip = session.project + ' | ' + duration + ' | ' +
       (isActive ? 'Active' : 'Idle');
@@ -546,7 +572,7 @@ function renderSkillNode(parent, skill) {
   g.appendChild(pctLabel);
 
   // Interactions
-  g.addEventListener('dblclick', () => openDetailPanel('skill', skill));
+  g.addEventListener('click', (e) => { e.stopPropagation(); selectNode(key); openDetailPanel('skill', skill); });
   g.addEventListener('mouseenter', (e) => {
     showTooltip(e, skill.name + ': ' + Math.round(pct * 100) + '% effective (' + (skill.total || 0) + ' invocations)');
   });
@@ -596,7 +622,7 @@ function renderPatternNode(parent, pattern, index) {
   g.appendChild(label);
 
   // Interactions
-  g.addEventListener('dblclick', () => openDetailPanel('pattern', pattern));
+  g.addEventListener('click', (e) => { e.stopPropagation(); selectNode(key); openDetailPanel('pattern', pattern); });
   g.addEventListener('mouseenter', (e) => {
     const tip = (pattern.scope || 'pattern') + ': ' + truncate(pattern.content, 60) +
       ' (' + Math.round(conf * 100) + '% confidence)';
@@ -653,11 +679,11 @@ function setupDrag(gElement, nodeKey) {
 }
 
 function updateEdgesForNode() {
-  const svg = $('graph');
-  const oldEdges = svg.querySelector('.edges-layer');
+  const root = $('graph-root');
+  const oldEdges = root.querySelector('.edges-layer');
   if (oldEdges) {
     const newEdges = buildEdgesGroup();
-    svg.replaceChild(newEdges, oldEdges);
+    root.replaceChild(newEdges, oldEdges);
   }
 }
 
@@ -690,17 +716,102 @@ document.addEventListener('mousemove', (e) => {
   }
 });
 
+// ── Node selection ────────────────────────────────────────────
+
+function selectNode(nodeKey) {
+  // Remove previous selection
+  const root = $('graph-root');
+  if (root) {
+    const prev = root.querySelector('.node-selected');
+    if (prev) prev.classList.remove('node-selected');
+  }
+
+  selectedNodeKey = nodeKey;
+
+  // Add selection to new node
+  if (root && nodeKey) {
+    const node = root.querySelector('[data-node="' + nodeKey + '"]');
+    if (node) node.classList.add('node-selected');
+  }
+}
+
+// ── Zoom / Pan ───────────────────────────────────────────────
+
+function setupZoomPan() {
+  const container = $('graph-container');
+  if (!container) return;
+
+  // Mouse wheel zoom
+  container.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    const newScale = clamp(camera.scale + delta, ZOOM_MIN, ZOOM_MAX);
+
+    // Zoom toward cursor position
+    const rect = container.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    // Adjust pan so zoom centers on cursor
+    const scaleRatio = newScale / camera.scale;
+    camera.x = mx - scaleRatio * (mx - camera.x);
+    camera.y = my - scaleRatio * (my - camera.y);
+    camera.scale = newScale;
+
+    applyCameraTransform();
+  }, { passive: false });
+
+  // Middle-click or right-click + drag to pan
+  let panning = false;
+  let panStart = { x: 0, y: 0 };
+  let camStart = { x: 0, y: 0 };
+
+  container.addEventListener('mousedown', function(e) {
+    // Middle click (button 1) or right click (button 2) or left click on empty space
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && e.target === $('graph'))) {
+      e.preventDefault();
+      panning = true;
+      panStart = { x: e.clientX, y: e.clientY };
+      camStart = { x: camera.x, y: camera.y };
+    }
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!panning) return;
+    camera.x = camStart.x + (e.clientX - panStart.x);
+    camera.y = camStart.y + (e.clientY - panStart.y);
+    applyCameraTransform();
+  });
+
+  document.addEventListener('mouseup', function() {
+    panning = false;
+  });
+
+  // Prevent context menu on right-click in graph
+  container.addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+  });
+
+  // Double-click to reset zoom
+  container.addEventListener('dblclick', function(e) {
+    if (e.target === $('graph')) {
+      camera.x = 0;
+      camera.y = 0;
+      camera.scale = 1;
+      applyCameraTransform();
+    }
+  });
+}
+
 // ── Detail Panel ─────────────────────────────────────────────
 
 function openDetailPanel(type, data) {
-  const panel = $('detail-panel');
   const title = $('detail-title');
   const body = $('detail-body');
 
   // Clear any existing auto-refresh
   clearDetailRefresh();
-
-  panel.classList.add('detail-panel--open');
+  clearTranscriptRefresh();
 
   switch (type) {
     case 'patrol':
@@ -723,10 +834,19 @@ function openDetailPanel(type, data) {
 }
 
 function closeDetailPanel() {
-  const panel = $('detail-panel');
-  panel.classList.remove('detail-panel--open');
   clearDetailRefresh();
   clearTranscriptRefresh();
+  selectedNodeKey = null;
+  const body = $('detail-body');
+  const title = $('detail-title');
+  if (title) title.textContent = 'Select a node';
+  if (body) body.innerHTML = '<p class="detail-empty">Double-click any node to view details.</p>';
+  // Remove selection highlight
+  const root = $('graph-root');
+  if (root) {
+    const prev = root.querySelector('.node-selected');
+    if (prev) prev.classList.remove('node-selected');
+  }
 }
 
 function clearDetailRefresh() {
@@ -1006,12 +1126,12 @@ function escAndFormat(text) {
 
 // Update duration text in session nodes every second without full re-render
 setInterval(function() {
-  const svg = $('graph');
-  if (!svg) return;
+  const root = $('graph-root');
+  if (!root) return;
 
   state.sessions.forEach(function(session) {
     const key = 'session-' + session.id;
-    const g = svg.querySelector('[data-node="' + key + '"]');
+    const g = root.querySelector('[data-node="' + key + '"]');
     if (!g) return;
 
     // Find the stat text element (3rd text = duration line)
@@ -1138,20 +1258,17 @@ function onResize() {
 // ── Init ─────────────────────────────────────────────────────
 
 async function init() {
+  // Set up zoom/pan on the graph canvas
+  setupZoomPan();
+
   // Load all data and render
   await loadAll();
 
   // Connect SSE for live updates
   connectSSE();
 
-  // Detail panel close button
-  const closeBtn = $('detail-close');
-  if (closeBtn) {
-    closeBtn.addEventListener('click', closeDetailPanel);
-  }
-
-  // Close detail panel on Escape
-  document.addEventListener('keydown', (e) => {
+  // Escape clears selection
+  document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeDetailPanel();
   });
 

@@ -20,19 +20,30 @@
     <div class="header__right">
       <span class="live-dot" id="live-dot"></span>
       <span class="live-text" id="live-text">Connecting...</span>
+      <span class="zoom-indicator" id="zoom-indicator">100%</span>
     </div>
   </header>
 
-  <!-- ── SVG canvas (fills viewport below header) ────────────── -->
-  <svg id="graph" class="graph"></svg>
+  <!-- ── Main layout: graph + fixed detail panel ──────────────── -->
+  <div class="main-layout">
 
-  <!-- ── Detail panel overlay (right side, slides in) ────────── -->
-  <div class="detail-panel" id="detail-panel">
-    <div class="detail-panel__header">
-      <span class="detail-panel__title" id="detail-title">Details</span>
-      <button class="detail-panel__close" id="detail-close">&times;</button>
+    <!-- SVG canvas with zoom/pan -->
+    <div class="graph-container" id="graph-container">
+      <svg id="graph" class="graph">
+        <g id="graph-root"></g>
+      </svg>
     </div>
-    <div class="detail-panel__body" id="detail-body"></div>
+
+    <!-- Fixed detail panel (always visible) -->
+    <div class="detail-panel" id="detail-panel">
+      <div class="detail-panel__header">
+        <span class="detail-panel__title" id="detail-title">Select a node</span>
+      </div>
+      <div class="detail-panel__body" id="detail-body">
+        <p class="detail-empty">Double-click any node to view details.</p>
+      </div>
+    </div>
+
   </div>
 
   <!-- ── Tooltip ─────────────────────────────────────────────── -->
