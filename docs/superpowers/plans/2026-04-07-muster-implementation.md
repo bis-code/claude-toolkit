@@ -117,7 +117,7 @@ Each phase is **one ralph-loop session**. Before launching, commit your current 
 ### Phase 1 prompt
 
 ```
-/ralph-loop "Implement Phase 1 of muster per
+/ralph-loop:ralph-loop "Implement Phase 1 of muster per
 docs/superpowers/plans/2026-04-07-muster-implementation.md §Phase 1.
 
 Scope (Phase 1 only):

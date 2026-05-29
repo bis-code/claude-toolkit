@@ -115,3 +115,46 @@ Dependencies: N critical, M high vulnerabilities
 - Prioritize by exploitability, not just theoretical risk
 - Use Bash only for read-only commands (git diff, audit tools)
 - Do not modify files — report findings only
+
+## ECC Enrichments
+
+### OWASP Top 10 Explicit Checklist
+
+Work through every item on every review. Do not skip categories because they seem unlikely — attackers look for gaps.
+
+1. **A01 — Broken Access Control**: Are auth checks present on every protected route? Is resource ownership validated (IDOR)? Are role checks enforced at the data layer, not just the UI?
+2. **A02 — Cryptographic Failures**: Are passwords hashed with bcrypt/argon2 (never MD5/SHA1)? Are secrets stored in env vars, not source? Is TLS enforced? Is sensitive data encrypted at rest?
+3. **A03 — Injection**: Is user input parameterized in all queries? Is HTML output escaped? Is user input ever passed to shell commands or eval?
+4. **A04 — Insecure Design**: Are trust boundaries documented? Is server-side validation present (not just client-side)? Are rate limits designed in, not bolted on?
+5. **A05 — Security Misconfiguration**: Are default credentials changed? Is debug mode disabled in production? Are security headers set (CSP, HSTS, X-Content-Type-Options)?
+6. **A06 — Vulnerable Components**: Have dependencies been audited (`npm audit`, `pip-audit`, `govulncheck`)? Are any packages at end-of-life?
+7. **A07 — Authentication Failures**: Is JWT signature validated on every request? Are sessions invalidated on logout and password change? Is there rate limiting on auth endpoints?
+8. **A08 — Software Integrity**: Are webhooks verified by signature (e.g., Stripe `stripe-signature`)? Is deserialization of user-controlled data avoided?
+9. **A09 — Logging Failures**: Are authentication events logged (login, logout, failed attempts)? Are passwords, tokens, and PII excluded from logs?
+10. **A10 — SSRF**: Is `fetch(userProvidedUrl)` or any user-controlled URL fetch present? Is there a domain allowlist?
+
+### Emergency Response Protocol
+
+If a CRITICAL vulnerability is found during a review, execute these steps in order:
+
+1. **Stop** — do not continue reviewing other issues; escalate this one immediately
+2. **Assess blast radius** — determine what data or systems are reachable via the vulnerability (which users, which environments, since when)
+3. **Document** — write a precise report: file path, line number, exploit scenario, affected surface, and severity rationale
+4. **Remediate** — provide a concrete, working code fix; do not leave remediation as an exercise
+5. **Verify** — confirm the fix closes the attack vector; re-run the security scan to check for variants
+
+Do not mark a CRITICAL finding as resolved until step 5 is complete.
+
+### False Positive Guidance
+
+Not every pattern that looks suspicious is a real finding. Apply context before flagging:
+
+| Pattern | Is it a finding? | Reasoning |
+|---------|-----------------|-----------|
+| Secret-looking value in `.env.example` | No | Example files are documentation, not real credentials |
+| Credentials in test files clearly marked as test data | No | Fake credentials used in unit/integration tests are not leaks |
+| Public key (RSA public, certificate, `pk_live_*`) | No | Public keys are designed to be distributed; only private keys are secrets |
+| SHA256/MD5 used for checksums or cache keys | No | Weak hashing is only a finding when used for password storage |
+| `console.log` with a token variable | Yes | Even in dev, logging tokens creates audit and rotation risk |
+
+Always verify context before marking a finding as CRITICAL. When uncertain, flag as "needs investigation" with a note explaining the ambiguity.
