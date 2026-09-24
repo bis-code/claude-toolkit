@@ -7,13 +7,16 @@ import (
 	"testing"
 )
 
-func TestRealWorld_LearnmeldMonorepo(t *testing.T) {
-	dir := "/Users/baicoianuionut/som/personal-projects/learnmeld"
+func TestRealWorld_TurborepoMonorepo(t *testing.T) {
+	dir := os.Getenv("REALWORLD_MONOREPO_DIR")
+	if dir == "" {
+		t.Skip("REALWORLD_MONOREPO_DIR not set")
+	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		t.Skipf("learnmeld repo not found at %s", dir)
+		t.Skipf("monorepo not found at %s", dir)
 	}
 
-	// learnmeld has turbo.json so DetectMonorepo should take the turborepo path.
+	// The monorepo has turbo.json so DetectMonorepo should take the turborepo path.
 	monorepoType, subProjects := DetectMonorepo(dir)
 	if monorepoType != "turborepo" {
 		t.Errorf("expected monorepo_type 'turborepo', got %q", monorepoType)
@@ -55,7 +58,10 @@ func TestRealWorld_LearnmeldMonorepo(t *testing.T) {
 }
 
 func TestRealWorld_McpDeepThink(t *testing.T) {
-	dir := "/Users/baicoianuionut/som/personal-projects/mcp-deep-think"
+	dir := os.Getenv("REALWORLD_TS_DIR")
+	if dir == "" {
+		t.Skip("REALWORLD_TS_DIR not set")
+	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		t.Skipf("mcp-deep-think repo not found at %s", dir)
 	}
@@ -74,9 +80,12 @@ func TestRealWorld_McpDeepThink(t *testing.T) {
 }
 
 func TestRealWorld_WorkspaceDetection(t *testing.T) {
-	dir := "/Users/baicoianuionut/som/personal-projects"
+	dir := os.Getenv("REALWORLD_WORKSPACE_DIR")
+	if dir == "" {
+		t.Skip("REALWORLD_WORKSPACE_DIR not set")
+	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		t.Skipf("personal-projects dir not found at %s", dir)
+		t.Skipf("workspace dir not found at %s", dir)
 	}
 
 	cfg, err := Detect(dir)
@@ -85,7 +94,7 @@ func TestRealWorld_WorkspaceDetection(t *testing.T) {
 	}
 
 	if len(cfg.Repos) < 3 {
-		t.Errorf("expected at least 3 repos in personal-projects, got %d", len(cfg.Repos))
+		t.Errorf("expected at least 3 repos in the workspace, got %d", len(cfg.Repos))
 	}
 
 	t.Logf("Detected %d repos in %s:", len(cfg.Repos), dir)
@@ -100,20 +109,14 @@ func TestRealWorld_WorkspaceDetection(t *testing.T) {
 		}
 	}
 
-	// learnmeld must be identified as a turborepo monorepo with at least 2 sub-projects.
-	foundLearnmeld := false
+	// At least one repo must be identified as a monorepo with at least 2 sub-projects.
+	foundMonorepo := false
 	for _, r := range cfg.Repos {
-		if r.Path == "learnmeld" {
-			foundLearnmeld = true
-			if r.MonorepoType == "" {
-				t.Error("learnmeld should be detected as a monorepo")
-			}
-			if len(r.SubProjects) < 2 {
-				t.Errorf("learnmeld should have at least 2 sub-projects, got %d", len(r.SubProjects))
-			}
+		if r.MonorepoType != "" && len(r.SubProjects) >= 2 {
+			foundMonorepo = true
 		}
 	}
-	if !foundLearnmeld {
-		t.Error("expected learnmeld to appear in detected repos")
+	if !foundMonorepo {
+		t.Error("expected a monorepo with at least 2 sub-projects in detected repos")
 	}
 }

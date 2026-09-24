@@ -276,8 +276,8 @@ Run:
 mkdir -p ~/som/personal-projects/muster
 cd ~/som/personal-projects/muster
 git init
-git config user.name "Ioan-Sorin Baicoianu"
-git config user.email "baicoianuioansorin@gmail.com"
+git config user.name "<your name>"
+git config user.email "<your email>"
 ```
 
 - [ ] **Step 2: Initialize the Go module**
