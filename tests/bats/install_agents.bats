@@ -250,7 +250,7 @@ EOF
 # ── monorepo-aware detection ──
 
 @test "detect_deep_domains: scans monorepo sub-projects for deps" {
-  # Simulate learnmeld: pnpm monorepo with go.mod + stripe in apps/api
+  # Simulate a pnpm monorepo with go.mod + stripe in apps/api
   mkdir -p "$TEST_PROJECT_DIR/apps/api" "$TEST_PROJECT_DIR/apps/web"
   cat > "$TEST_PROJECT_DIR/pnpm-workspace.yaml" <<'EOF'
 packages:
